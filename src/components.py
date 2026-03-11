@@ -279,7 +279,7 @@ def _create_star_field(n=80):
 
 
 def create_galaxy_card(galaxy_id, side="left", is_champion=False):
-    """Build a single galaxy profile card -- image + name only."""
+    """Build a single galaxy profile card -- image + name + description."""
     profile = GALAXY_PROFILES[galaxy_id]
     btn_id = f"{side}-card-btn"
     
@@ -296,6 +296,9 @@ def create_galaxy_card(galaxy_id, side="left", is_champion=False):
         card_style["border"] = "2px solid rgba(255, 215, 0, 0.7)"
         card_style["borderRadius"] = "12px"
         card_style["animation"] = "galaxyWin 1.5s ease-in-out"
+    
+    # Get description text
+    description = profile.get('description', profile.get('bio', ''))
     
     card_contents = [
         html.Img(
@@ -316,7 +319,22 @@ def create_galaxy_card(galaxy_id, side="left", is_champion=False):
             ],
             className="galaxy-card-name",
         ),
+        # Add description below the name
+        html.Div(
+            description,
+            className="galaxy-card-description",
+            style={
+                "fontSize": "0.8rem",
+                "color": "rgba(255,255,255,0.7)", 
+                "padding": "8px 16px 16px",
+                "lineHeight": "1.4",
+                "fontFamily": "'Outfit', sans-serif",
+            }
+        ) if description else None,
     ]
+    
+    # Filter out None elements
+    card_contents = [item for item in card_contents if item is not None]
 
     return html.Button(
         card_contents,
