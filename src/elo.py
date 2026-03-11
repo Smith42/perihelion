@@ -137,13 +137,46 @@ def get_leaderboard() -> list[dict]:
     )
 
 
-def select_pair(seen_pairs: set[tuple[str, str]]) -> tuple[str, str] | None:
+def select_pair(seen_pairs: set[tuple[str, str]], champion_id: str | None = None) -> tuple[str, str] | None:
     """Select a pair of galaxies for comparison.
 
-    Prefers galaxies with close ELO ratings (70%) or random (30%).
+    If champion_id is provided, returns (champion_id, challenger_id).
+    Otherwise, prefers galaxies with close ELO ratings (70%) or random (30%).
     Skips pairs already seen in this session.
     Returns None if all pairs exhausted.
     """
+    if champion_id is not None:
+        # King of the hill mode: find challenger for champion
+        challenger_candidates = [gid for gid in GALAXY_IDS if gid != champion_id]
+        
+        # Filter out seen challengers
+        available_challengers = [
+            gid for gid in challenger_candidates
+            if (champion_id, gid) not in seen_pairs and (gid, champion_id) not in seen_pairs
+        ]
+        
+        if not available_challengers:
+            return None
+        
+        if random.random() < 0.3:
+            # Pure random challenger
+            challenger = random.choice(available_challengers)
+        else:
+            # Prefer challenger with close ELO to champion
+            with _lock:
+                champion_elo = _elo_ratings.get(champion_id, DEFAULT_ELO)
+                rated_challengers = [
+                    (gid, abs(_elo_ratings.get(gid, DEFAULT_ELO) - champion_elo))
+                    for gid in available_challengers
+                ]
+            rated_challengers.sort(key=lambda x: x[1])
+            # Pick from top 20% closest
+            top_n = max(1, len(rated_challengers) // 5)
+            challenger = random.choice(rated_challengers[:top_n])[0]
+        
+        return (champion_id, challenger)
+    
+    # Original random pair selection logic
     all_pairs = list(combinations(GALAXY_IDS, 2))
     # Normalize pair ordering for consistent comparison
     available = [
@@ -166,7 +199,7 @@ def select_pair(seen_pairs: set[tuple[str, str]]) -> tuple[str, str] | None:
         top_n = max(1, len(rated) // 5)
         pair = random.choice(rated[:top_n])[0]
 
-    # Randomize left/right
+    # Randomize left/right for initial random pairs
     if random.random() < 0.5:
         return (pair[1], pair[0])
     return pair

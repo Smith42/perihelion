@@ -273,39 +273,62 @@ def _create_star_field(n=80):
     )
 
 
-def create_galaxy_card(galaxy_id, side="left"):
+def create_galaxy_card(galaxy_id, side="left", is_champion=False):
     """Build a single galaxy profile card -- image + name only."""
     profile = GALAXY_PROFILES[galaxy_id]
     btn_id = f"{side}-card-btn"
+    
+    card_style = {
+        "border": "none",
+        "padding": "0",
+        "textAlign": "left",
+        "width": "100%",
+    }
+    
+    # Add champion styling
+    if is_champion:
+        card_style["boxShadow"] = "0 0 20px rgba(255, 215, 0, 0.5)"
+        card_style["border"] = "2px solid rgba(255, 215, 0, 0.7)"
+        card_style["borderRadius"] = "12px"
+    
+    card_contents = [
+        html.Img(
+            src=f"/galaxy-images/{galaxy_id}.jpg",
+            className="galaxy-card-image",
+        ),
+        html.Div(
+            [
+                html.Span(profile["name"], style={"marginRight": "8px"}),
+                html.I(
+                    className="fas fa-crown",
+                    style={
+                        "color": "#FFD700",
+                        "fontSize": "0.9rem",
+                        "display": "inline" if is_champion else "none",
+                    }
+                ),
+            ],
+            className="galaxy-card-name",
+        ),
+    ]
 
     return html.Button(
-        [
-            html.Img(
-                src=f"/galaxy-images/{galaxy_id}.jpg",
-                className="galaxy-card-image",
-            ),
-            html.Div(profile["name"], className="galaxy-card-name"),
-        ],
+        card_contents,
         className="galaxy-card",
         id=btn_id,
         n_clicks=0,
-        style={
-            "border": "none",
-            "padding": "0",
-            "textAlign": "left",
-            "width": "100%",
-        },
+        style=card_style,
     )
 
 
-def create_arena(left_id=None, right_id=None):
+def create_arena(left_id=None, right_id=None, champion_id=None):
     """Build the two-card arena with VS divider."""
     if left_id is None or right_id is None:
         # All done state
         return html.Div(
             [
                 html.Div(
-                    "Observable Universe Explored",
+                    "Champion Reign Complete!",
                     style={
                         "fontFamily": "'Playfair Display', serif",
                         "fontSize": "1.8rem",
@@ -315,7 +338,7 @@ def create_arena(left_id=None, right_id=None):
                     },
                 ),
                 html.P(
-                    "You have compared all 253 unique galaxy pairs in this session. "
+                    "The current champion has faced all possible challengers. "
                     "Check the leaderboard below for the final rankings!",
                     style={"color": "rgba(255,255,255,0.5)", "maxWidth": "400px", "margin": "0 auto 24px"},
                 ),
@@ -337,10 +360,14 @@ def create_arena(left_id=None, right_id=None):
             className="all-done-card",
         )
 
+    # Determine champion status
+    left_is_champion = champion_id is not None and left_id == champion_id
+    right_is_champion = champion_id is not None and right_id == champion_id
+
     return dbc.Row(
         [
             dbc.Col(
-                create_galaxy_card(left_id, side="left"),
+                create_galaxy_card(left_id, side="left", is_champion=left_is_champion),
                 width=5,
             ),
             dbc.Col(
@@ -348,7 +375,7 @@ def create_arena(left_id=None, right_id=None):
                 width=2, className="d-flex align-items-center justify-content-center",
             ),
             dbc.Col(
-                create_galaxy_card(right_id, side="right"),
+                create_galaxy_card(right_id, side="right", is_champion=right_is_champion),
                 width=5,
             ),
         ],
@@ -438,6 +465,7 @@ def create_layout():
             # Stores
             dcc.Store(id="seen-pairs", data=[]),
             dcc.Store(id="current-pair", data=None),
+            dcc.Store(id="current-champion", data=None),
             dcc.Store(id="comparison-count", data=0),
             dcc.Store(id="session-id", data=""),
         ],

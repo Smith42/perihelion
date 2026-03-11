@@ -18,11 +18,12 @@ logger = logging.getLogger(__name__)
 def register_callbacks(app):
     """Register all Dash callbacks."""
 
-    # Initial load: populate the arena with the first pair
+    # Initial load: populate the arena with the first champion vs challenger
     @app.callback(
         [
             Output("arena-container", "children"),
             Output("current-pair", "data"),
+            Output("current-champion", "data"),
             Output("comparison-counter", "children"),
             Output("leaderboard-body", "children"),
             Output("session-id", "data"),
@@ -31,12 +32,19 @@ def register_callbacks(app):
     )
     def initial_load(_):
         session_id = uuid.uuid4().hex
-        pair = elo.select_pair(set())
-        arena = create_arena(pair[0], pair[1])
+        # Select random starting champion
+        from src.galaxy_profiles import GALAXY_IDS
+        import random
+        champion_id = random.choice(GALAXY_IDS)
+        
+        # Find first challenger
+        pair = elo.select_pair(set(), champion_id=champion_id)
+        arena = create_arena(pair[0], pair[1], champion_id=champion_id)
         leaderboard = create_leaderboard_rows(elo.get_leaderboard())
         return (
             arena,
             [pair[0], pair[1]],
+            champion_id,
             f"0 / {TOTAL_PAIRS} comparisons",
             leaderboard,
             session_id,
@@ -47,6 +55,7 @@ def register_callbacks(app):
         [
             Output("arena-container", "children", allow_duplicate=True),
             Output("current-pair", "data", allow_duplicate=True),
+            Output("current-champion", "data", allow_duplicate=True),
             Output("seen-pairs", "data", allow_duplicate=True),
             Output("comparison-count", "data", allow_duplicate=True),
             Output("comparison-counter", "children", allow_duplicate=True),
@@ -58,13 +67,14 @@ def register_callbacks(app):
         ],
         [
             State("current-pair", "data"),
+            State("current-champion", "data"),
             State("seen-pairs", "data"),
             State("comparison-count", "data"),
             State("session-id", "data"),
         ],
         prevent_initial_call=True,
     )
-    def handle_card_click(left_clicks, right_clicks, current_pair, seen_pairs, comp_count, session_id):
+    def handle_card_click(left_clicks, right_clicks, current_pair, current_champion, seen_pairs, comp_count, session_id):
         if not ctx.triggered_id:
             raise PreventUpdate
 
@@ -112,20 +122,23 @@ def register_callbacks(app):
         # Update seen pairs and count
         seen_pairs.append([left_id, right_id])
         comp_count += 1
+        
+        # Update champion: winner becomes/stays champion
+        new_champion = winner_id
 
-        # Select next pair
+        # Select next pair with champion logic
         seen_set = set()
         for p in seen_pairs:
             seen_set.add((p[0], p[1]))
             seen_set.add((p[1], p[0]))
 
-        pair = elo.select_pair(seen_set)
+        pair = elo.select_pair(seen_set, champion_id=new_champion)
 
         if pair is None:
-            arena = create_arena(None, None)
+            arena = create_arena(None, None, champion_id=new_champion)
             current_pair_data = None
         else:
-            arena = create_arena(pair[0], pair[1])
+            arena = create_arena(pair[0], pair[1], champion_id=new_champion)
             current_pair_data = [pair[0], pair[1]]
 
         counter_text = f"{comp_count} / {TOTAL_PAIRS} comparisons"
@@ -134,6 +147,7 @@ def register_callbacks(app):
         return (
             arena,
             current_pair_data,
+            new_champion,
             seen_pairs,
             comp_count,
             counter_text,
