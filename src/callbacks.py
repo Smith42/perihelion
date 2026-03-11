@@ -24,7 +24,6 @@ def register_callbacks(app):
             Output("arena-container", "children"),
             Output("current-pair", "data"),
             Output("current-champion", "data"),
-            Output("comparison-counter", "children"),
             Output("leaderboard-body", "children"),
             Output("session-id", "data"),
         ],
@@ -39,13 +38,12 @@ def register_callbacks(app):
         
         # Find first challenger
         pair = elo.select_pair(set(), champion_id=champion_id)
-        arena = create_arena(pair[0], pair[1], champion_id=champion_id)
+        arena = create_arena(pair[0], pair[1], champion_id=None)  # No crown until first win
         leaderboard = create_leaderboard_rows(elo.get_leaderboard())
         return (
             arena,
             [pair[0], pair[1]],
             champion_id,
-            f"0 / {TOTAL_PAIRS} comparisons",
             leaderboard,
             session_id,
         )
@@ -58,7 +56,6 @@ def register_callbacks(app):
             Output("current-champion", "data", allow_duplicate=True),
             Output("seen-pairs", "data", allow_duplicate=True),
             Output("comparison-count", "data", allow_duplicate=True),
-            Output("comparison-counter", "children", allow_duplicate=True),
             Output("leaderboard-body", "children", allow_duplicate=True),
         ],
         [
@@ -141,7 +138,7 @@ def register_callbacks(app):
             arena = create_arena(pair[0], pair[1], champion_id=new_champion)
             current_pair_data = [pair[0], pair[1]]
 
-        counter_text = f"{comp_count} / {TOTAL_PAIRS} comparisons"
+        counter_text = ""  # Remove comparison counter
         leaderboard = create_leaderboard_rows(elo.get_leaderboard())
 
         return (
@@ -150,7 +147,6 @@ def register_callbacks(app):
             new_champion,
             seen_pairs,
             comp_count,
-            counter_text,
             leaderboard,
         )
 

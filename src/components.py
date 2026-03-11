@@ -85,13 +85,18 @@ def get_app_theme() -> str:
                 border-radius: 16px;
                 overflow: hidden;
                 cursor: pointer;
-                transition: border-color 0.2s ease;
+                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                 background: #0a0a1a;
                 border: 2px solid rgba(255,255,255,0.08);
             }
 
             .galaxy-card:hover {
                 border-color: rgba(167,139,250,0.5);
+                transform: translateY(-2px);
+            }
+            
+            .galaxy-card:active {
+                animation: galaxyClick 0.2s ease;
             }
 
             .galaxy-card-image {
@@ -290,6 +295,7 @@ def create_galaxy_card(galaxy_id, side="left", is_champion=False):
         card_style["boxShadow"] = "0 0 20px rgba(255, 215, 0, 0.5)"
         card_style["border"] = "2px solid rgba(255, 215, 0, 0.7)"
         card_style["borderRadius"] = "12px"
+        card_style["animation"] = "galaxyWin 1.5s ease-in-out"
     
     card_contents = [
         html.Img(
@@ -420,7 +426,6 @@ def create_layout():
                 [
                     html.Div("g-Harmony", className="gharmony-title text-center"),
                     html.Div("FIND YOUR GALAXY MATCH", className="gharmony-tagline text-center mt-1"),
-                    html.Div(id="comparison-counter", className="comparison-counter text-center mt-2"),
                     html.Div(
                         "Left/Right arrow keys to choose",
                         style={
@@ -429,7 +434,7 @@ def create_layout():
                             "fontWeight": "400",
                             "color": "rgba(255,255,255,0.2)",
                             "letterSpacing": "1px",
-                            "marginTop": "4px",
+                            "marginTop": "8px",
                         },
                     ),
                 ],
