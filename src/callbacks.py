@@ -31,19 +31,17 @@ def register_callbacks(app):
     )
     def initial_load(_):
         session_id = uuid.uuid4().hex
-        # Select random starting champion
+        # For initial load, no champion yet - select random pair
         from src.galaxy_profiles import GALAXY_IDS
-        import random
-        champion_id = random.choice(GALAXY_IDS)
         
-        # Find first challenger
-        pair = elo.select_pair(set(), champion_id=champion_id)
+        # Select random pair (no champion initially)
+        pair = elo.select_pair(set(), champion_id=None)
         arena = create_arena(pair[0], pair[1], champion_id=None)  # No crown until first win
         leaderboard = create_leaderboard_rows(elo.get_leaderboard())
         return (
             arena,
             [pair[0], pair[1]],
-            champion_id,
+            None,  # No champion initially
             leaderboard,
             session_id,
         )

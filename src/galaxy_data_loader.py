@@ -49,17 +49,16 @@ def load_galaxy_data() -> Dict[str, Dict[str, Any]]:
             euclid_row = euclid_data[galaxy_id_str]
             desc_row = descriptions_data[galaxy_id_str]
             
-            # Extract name and description from caption
+            # Extract name and description from dataset
             caption = desc_row.get('caption', '')
+            dataset_name = desc_row.get('name', f'Galaxy {i}')
             bio = ""
             description = ""
-            name = f"Galaxy {i}"
             
-            # Parse the caption to extract bio and name if available
+            # Parse the caption for bio information
             if caption:
-                lines = caption.split('\\n')
-                if lines and lines[0].startswith('Bio:'):
-                    bio_part = lines[0].replace('Bio:', '').strip()
+                if caption.startswith('Bio:'):
+                    bio_part = caption.replace('Bio:', '').strip()
                     bio = bio_part[:100] + "..." if len(bio_part) > 100 else bio_part
                     description = bio_part
                 else:
@@ -67,7 +66,7 @@ def load_galaxy_data() -> Dict[str, Dict[str, Any]]:
                     bio = description[:100] + "..." if len(description) > 100 else description
             
             galaxy_profiles[numbered_id] = {
-                "name": name,
+                "name": dataset_name,
                 "bio": bio,
                 "description": description,  
                 "tags": ["Cosmic", "Mysterious"],
