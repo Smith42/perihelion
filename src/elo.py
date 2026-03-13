@@ -45,11 +45,17 @@ class EloState:
         self.dataset_id = dataset_id
 
     def to_dict(self) -> dict:
+        rankings = sorted(
+            [{"galaxy_id": idx, "elo": self.elo_ratings.get(idx, DEFAULT_ELO)} for idx in self.pool],
+            key=lambda x: x["elo"],
+            reverse=True,
+        )
         return {
             "pool": self.pool,
             "elo_ratings": {str(k): v for k, v in self.elo_ratings.items()},
             "total_comparisons": self.total_comparisons,
             "dataset_id": self.dataset_id,
+            "rankings": rankings,
         }
 
     @classmethod
