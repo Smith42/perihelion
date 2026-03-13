@@ -102,31 +102,6 @@ def _extract_image_url(row: dict) -> str | None:
     return None
 
 
-def fetch_image_bytes(row_index: int, row: dict | None = None) -> bytes | None:
-    """Download image bytes for a given row index.
-
-    If ``row`` is provided, extracts the image URL from it.
-    Otherwise fetches the row first.
-    """
-    if row is None:
-        rows = fetch_rows([row_index])
-        row = rows.get(row_index)
-        if row is None:
-            return None
-
-    img_url = _extract_image_url(row)
-    if not img_url:
-        return None
-
-    try:
-        resp = requests.get(img_url, timeout=60)
-        resp.raise_for_status()
-        return resp.content
-    except Exception as e:
-        logger.warning("Failed to download image for row %d: %s", row_index, e)
-        return None
-
-
 # ---------------------------------------------------------------------------
 # ImageCache — thread-safe, disk-based LRU
 # ---------------------------------------------------------------------------
