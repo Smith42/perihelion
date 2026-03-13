@@ -143,15 +143,32 @@ def sample_pool_streaming(
     it = _make_dataset(seed, pool_size)
     sync_count = min(prefetch_images, pool_size)
 
-    # Synchronous: first sync_count rows — populate metadata + cache images
-    for i in range(sync_count):
-        row = next(it)
-        img_col = row.get(IMAGE_COLUMN)
-        if isinstance(img_col, dict) and img_col.get("bytes"):
-            image_cache.put(i, img_col["bytes"])
+    def _extract_bytes(img_col) -> bytes | None:
+        """Extract raw JPEG bytes from either a bytes-dict or a PIL Image."""
+        if isinstance(img_col, dict):
+            return img_col.get("bytes")
+        if img_col is not None:
+            # cast_column didn't take effect — img_col is a PIL Image
+            try:
+                import io
+                buf = io.BytesIO()
+                img_col.save(buf, format="JPEG")
+                return buf.getvalue()
+            except Exception as e:
+                logger.warning("Failed to convert PIL image to bytes: %s", e)
+        return None
+
+    def _process_row(i: int, row: dict):
+        img_bytes = _extract_bytes(row.get(IMAGE_COLUMN))
+        if img_bytes:
+            image_cache.put(i, img_bytes)
         else:
             logger.warning("No image bytes for row %d", i)
         metadata_map[i] = {k: v for k, v in row.items() if k != IMAGE_COLUMN}
+
+    # Synchronous: first sync_count rows — populate metadata + cache images
+    for i in range(sync_count):
+        _process_row(i, next(it))
 
     logger.info("%d images cached — app ready, filling remaining %d in background",
                 sync_count, pool_size - sync_count)
@@ -161,11 +178,7 @@ def sample_pool_streaming(
         def _bg():
             for i in range(sync_count, pool_size):
                 try:
-                    row = next(it)
-                    img_col = row.get(IMAGE_COLUMN)
-                    if isinstance(img_col, dict) and img_col.get("bytes"):
-                        image_cache.put(i, img_col["bytes"])
-                    metadata_map[i] = {k: v for k, v in row.items() if k != IMAGE_COLUMN}
+                    _process_row(i, next(it))
                 except StopIteration:
                     break
                 except Exception as e:
