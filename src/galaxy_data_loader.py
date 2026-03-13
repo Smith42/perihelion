@@ -37,11 +37,13 @@ def _make_dataset(seed: int, pool_size: int, with_images: bool):
         token=HF_TOKEN if HF_TOKEN else None,
     )
     features = getattr(ds, "features", None)
-    if features and IMAGE_COLUMN in features:
-        # Always cast to raw bytes first to avoid Pillow decoding
-        ds = ds.cast_column(IMAGE_COLUMN, HFImage(decode=False))
-        if not with_images:
-            ds = ds.remove_columns([IMAGE_COLUMN])
+    if with_images:
+        if features and IMAGE_COLUMN in features:
+            ds = ds.cast_column(IMAGE_COLUMN, HFImage(decode=False))
+    else:
+        # Column projection at Parquet level — image bytes never downloaded
+        if features and IMAGE_COLUMN in features:
+            ds = ds.select_columns([c for c in features if c != IMAGE_COLUMN])
 
     ds = ds.shuffle(seed=seed, buffer_size=_SHUFFLE_BUFFER)
     ds = ds.take(pool_size)
