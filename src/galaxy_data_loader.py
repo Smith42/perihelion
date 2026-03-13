@@ -1,201 +1,227 @@
-"""Load galaxy data from HuggingFace datasets and update profiles."""
+"""HF dataset-viewer API client + disk-based LRU image cache."""
 
-import os
 import logging
-from typing import Dict, Any
-import requests
-from PIL import Image
-import io
+import os
+import random
+import threading
+import time
+from pathlib import Path
 
-try:
-    from datasets import load_dataset
-    DATASETS_AVAILABLE = True
-except ImportError:
-    DATASETS_AVAILABLE = False
-    logging.warning("datasets library not available, using fallback data")
+import requests
+
+from src.config import (
+    DATASET_CONFIG,
+    DATASET_ID,
+    DATASET_SPLIT,
+    HF_TOKEN,
+    ID_COLUMN,
+    IMAGE_CACHE_DIR,
+    IMAGE_CACHE_MAX_BYTES,
+    IMAGE_COLUMN,
+)
 
 logger = logging.getLogger(__name__)
 
-def load_galaxy_data() -> Dict[str, Dict[str, Any]]:
-    """Load galaxy data from HuggingFace datasets and return structured profiles."""
-    
-    if not DATASETS_AVAILABLE:
-        logger.warning("Using fallback galaxy data")
-        return get_fallback_galaxy_data()
-    
-    try:
-        # Load both datasets
-        euclid_dataset = load_dataset("mwalmsley/gz_euclid", "tiny", split="test")
-        descriptions_dataset = load_dataset("Smith42/dating_pool_but_galaxies", split="train")
-        
-        # Convert to dictionaries for easier access
-        euclid_data = {row['id_str']: row for row in euclid_dataset}
-        descriptions_data = {row['id_str']: row for row in descriptions_dataset}
-        
-        galaxy_profiles = {}
-        
-        # Match on id_str and create profiles with numbered galaxy IDs
-        matched_galaxies = []
-        for galaxy_id_str in euclid_data.keys():
-            if galaxy_id_str in descriptions_data:
-                matched_galaxies.append(galaxy_id_str)
-        
-        # Sort for consistent ordering
-        matched_galaxies.sort()
-        
-        # Create numbered galaxy profiles (galaxy_01, galaxy_02, etc.)
-        for i, galaxy_id_str in enumerate(matched_galaxies, 1):
-            numbered_id = f"galaxy_{i:02d}"
-            euclid_row = euclid_data[galaxy_id_str]
-            desc_row = descriptions_data[galaxy_id_str]
-            
-            # Extract name and description from dataset
-            caption = desc_row.get('caption', '')
-            dataset_name = desc_row.get('name', f'Galaxy {i}')
-            bio = ""
-            description = ""
-            
-            # Parse the caption for bio information
-            if caption:
-                if caption.startswith('Bio:'):
-                    bio_part = caption.replace('Bio:', '').strip()
-                    bio = bio_part[:100] + "..." if len(bio_part) > 100 else bio_part
-                    description = bio_part
-                else:
-                    description = caption.strip()
-                    bio = description[:100] + "..." if len(description) > 100 else description
-            
-            galaxy_profiles[numbered_id] = {
-                "name": dataset_name,
-                "bio": bio,
-                "description": description,  
-                "tags": ["Cosmic", "Mysterious"],
-                "color": generate_color_from_id(galaxy_id_str),
-                "id_str": galaxy_id_str,
-                "image_data": euclid_row.get('image'),  # PIL Image object
-                "euclid_features": {k: v for k, v in euclid_row.items() if k not in ['image', 'id_str']}
+_HF_API_BASE = "https://datasets-server.huggingface.co"
+
+
+def _hf_headers() -> dict:
+    """Return auth headers if HF_TOKEN is set."""
+    if HF_TOKEN:
+        return {"Authorization": f"Bearer {HF_TOKEN}"}
+    return {}
+
+
+# ---------------------------------------------------------------------------
+# Dataset metadata
+# ---------------------------------------------------------------------------
+
+def get_dataset_size() -> int:
+    """Get total row count via the HF dataset-viewer /info endpoint."""
+    url = f"{_HF_API_BASE}/info"
+    params = {"dataset": DATASET_ID, "config": DATASET_CONFIG}
+    resp = requests.get(url, params=params, headers=_hf_headers(), timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    splits = data["dataset_info"]["splits"]
+    return splits[DATASET_SPLIT]["num_examples"]
+
+
+def sample_pool_indices(total: int, pool_size: int) -> list[int]:
+    """Generate sorted random row indices for the tournament pool."""
+    if pool_size >= total:
+        return list(range(total))
+    indices = random.sample(range(total), pool_size)
+    indices.sort()
+    return indices
+
+
+# ---------------------------------------------------------------------------
+# Row / image fetching
+# ---------------------------------------------------------------------------
+
+def fetch_rows(offsets: list[int]) -> dict[int, dict]:
+    """Fetch rows by offset via the HF dataset-viewer /rows endpoint.
+
+    Returns {offset: row_dict} for each successfully fetched offset.
+    The image column value is replaced with its signed ``src`` URL (if present).
+    """
+    results: dict[int, dict] = {}
+    # The /rows endpoint supports length param (max 100 rows at a time)
+    # but requires a single offset — so we batch contiguous ranges where possible
+    # For simplicity, fetch one-by-one or small batches
+    for offset in offsets:
+        try:
+            url = f"{_HF_API_BASE}/rows"
+            params = {
+                "dataset": DATASET_ID,
+                "config": DATASET_CONFIG,
+                "split": DATASET_SPLIT,
+                "offset": offset,
+                "length": 1,
             }
-        
-        logger.info(f"Loaded {len(galaxy_profiles)} galaxy profiles from HuggingFace datasets")
-        return galaxy_profiles
-        
-    except Exception as e:
-        logger.error(f"Error loading from HuggingFace datasets: {e}")
-        return get_fallback_galaxy_data()
+            resp = requests.get(url, params=params, headers=_hf_headers(), timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            rows = data.get("rows", [])
+            if rows:
+                row = rows[0].get("row", {})
+                results[offset] = row
+        except Exception as e:
+            logger.warning("Failed to fetch row at offset %d: %s", offset, e)
+    return results
 
-def generate_color_from_id(id_str: str) -> str:
-    """Generate a consistent color from galaxy ID string."""
-    colors = [
-        "#A688C9", "#D68B8B", "#E8A0D0", "#7BC9A0", "#E87D5A",
-        "#6B8DD6", "#D4A76A", "#C9A688", "#B8A0C9", "#A0D4E8",
-        "#E8D4A0", "#A0E8B8", "#E8A0A0", "#A0A0E8", "#E8E8A0",
-        "#D0A0E8", "#A0E8D0", "#E8C4A0", "#C4A0E8", "#A0C4E8",
-        "#E8A0C4", "#B4E8A0", "#A0E8E8"
-    ]
-    # Use hash to get consistent color index
-    hash_val = sum(ord(c) for c in id_str)
-    return colors[hash_val % len(colors)]
 
-def get_fallback_galaxy_data() -> Dict[str, Dict[str, Any]]:
-    """Fallback galaxy data using original profiles with numbered IDs."""
-    fallback_profiles = {
-        "galaxy_01": {
-            "name": "Velvet Vortex",
-            "bio": "Smooth operator with a soft spiral glow.",
-            "description": "I keep my arms tight and my luminosity low-key. Looking for someone who appreciates subtlety over spectacle.",
-            "tags": ["Smooth Spiral", "Low-Key", "Gentle Glow"],
-            "color": "#A688C9",
-            "image_url": None,
-            "image_data": None
-        },
-        "galaxy_02": {
-            "name": "Crimson Drift", 
-            "bio": "Redshifted and proud.",
-            "description": "I have been expanding away from everyone for billions of years and I am NOT slowing down. Commitment-phobic? Maybe. Mysterious? Definitely.",
-            "tags": ["High Redshift", "Distant", "Loner Vibes"],
-            "color": "#D68B8B",
-            "image_url": None,
-            "image_data": None
-        }
-        # Add more as needed...
-    }
-    
-    # Generate numbered galaxy profiles if we have fewer than 23
-    for i in range(1, 24):
-        galaxy_id = f"galaxy_{i:02d}"
-        if galaxy_id not in fallback_profiles:
-            fallback_profiles[galaxy_id] = {
-                "name": f"Galaxy {i}",
-                "bio": "A mysterious galaxy in the cosmic dating scene.",
-                "description": "This galaxy is looking for its perfect cosmic match.",
-                "tags": ["Mysterious", "Cosmic"],
-                "color": "#A688C9",
-                "image_url": None,
-                "image_data": None
-            }
-    
-    return fallback_profiles
+def _extract_image_url(row: dict) -> str | None:
+    """Extract the image src URL from a row's image column."""
+    img_val = row.get(IMAGE_COLUMN)
+    if isinstance(img_val, dict):
+        return img_val.get("src")
+    if isinstance(img_val, str) and img_val.startswith("http"):
+        return img_val
+    return None
 
-def download_galaxy_image(image_data, galaxy_id: str, images_dir: str = "images") -> bool:
-    """Download and save a galaxy image from HuggingFace dataset."""
-    if not image_data:
-        return False
-    
+
+def fetch_image_bytes(row_index: int, row: dict | None = None) -> bytes | None:
+    """Download image bytes for a given row index.
+
+    If ``row`` is provided, extracts the image URL from it.
+    Otherwise fetches the row first.
+    """
+    if row is None:
+        rows = fetch_rows([row_index])
+        row = rows.get(row_index)
+        if row is None:
+            return None
+
+    img_url = _extract_image_url(row)
+    if not img_url:
+        return None
+
     try:
-        # Ensure images directory exists
-        os.makedirs(images_dir, exist_ok=True)
-        
-        # If image_data is a PIL Image (from datasets)
-        if hasattr(image_data, 'save') and hasattr(image_data, 'mode'):
-            image_path = os.path.join(images_dir, f"{galaxy_id}.jpg")
-            # Convert to RGB if needed (in case it's RGBA or other format)
-            if image_data.mode != 'RGB':
-                image_data = image_data.convert('RGB')
-            image_data.save(image_path, 'JPEG', quality=85)
-            logger.info(f"Saved image for {galaxy_id}")
-            return True
-            
-        # If image_data has a URL (fallback)
-        elif isinstance(image_data, dict) and 'url' in image_data:
-            response = requests.get(image_data['url'])
-            if response.status_code == 200:
-                image = Image.open(io.BytesIO(response.content))
-                if image.mode != 'RGB':
-                    image = image.convert('RGB')
-                image_path = os.path.join(images_dir, f"{galaxy_id}.jpg")
-                image.save(image_path, 'JPEG', quality=85)
-                logger.info(f"Downloaded and saved image for {galaxy_id}")
-                return True
-                
-        return False
-        
+        resp = requests.get(img_url, timeout=60)
+        resp.raise_for_status()
+        return resp.content
     except Exception as e:
-        logger.error(f"Error downloading image for {galaxy_id}: {e}")
-        return False
+        logger.warning("Failed to download image for row %d: %s", row_index, e)
+        return None
 
-def update_galaxy_images():
-    """Download all galaxy images from the dataset."""
-    galaxy_data = load_galaxy_data()
-    
-    for galaxy_id, profile in galaxy_data.items():
-        if profile.get('image_data'):
-            download_galaxy_image(profile['image_data'], galaxy_id)
-        elif profile.get('image_url'):
-            # Try to download from URL
+
+# ---------------------------------------------------------------------------
+# ImageCache — thread-safe, disk-based LRU
+# ---------------------------------------------------------------------------
+
+class ImageCache:
+    """Disk-based LRU image cache keyed by dataset row index."""
+
+    def __init__(self, cache_dir: str = IMAGE_CACHE_DIR, max_bytes: int = IMAGE_CACHE_MAX_BYTES):
+        self._dir = Path(cache_dir)
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._max_bytes = max_bytes
+        self._lock = threading.Lock()
+        # access_times: row_index -> last-access monotonic time
+        self._access_times: dict[int, float] = {}
+        self._total_bytes = 0
+        # Scan existing cache on init
+        self._scan_existing()
+
+    def _path_for(self, row_index: int) -> Path:
+        return self._dir / f"{row_index}.jpg"
+
+    def _scan_existing(self):
+        """Scan cache dir and populate tracking state."""
+        total = 0
+        for p in self._dir.glob("*.jpg"):
             try:
-                response = requests.get(profile['image_url'])
-                if response.status_code == 200:
-                    image = Image.open(io.BytesIO(response.content))
-                    download_galaxy_image(image, galaxy_id)
-            except Exception as e:
-                logger.error(f"Error downloading from URL for {galaxy_id}: {e}")
+                idx = int(p.stem)
+                size = p.stat().st_size
+                total += size
+                self._access_times[idx] = p.stat().st_mtime
+            except (ValueError, OSError):
+                continue
+        self._total_bytes = total
+        logger.info("Image cache: %d files, %.1f MB", len(self._access_times), total / 1e6)
 
-if __name__ == "__main__":
-    # Test the data loading
-    data = load_galaxy_data()
-    print(f"Loaded {len(data)} galaxies")
-    for galaxy_id, profile in list(data.items())[:3]:
-        print(f"{galaxy_id}: {profile['name']} - {profile['bio'][:50]}...")
-    
-    # Update images
-    update_galaxy_images()
+    def get_path(self, row_index: int) -> Path | None:
+        """Return cached file path if present, updating access time."""
+        p = self._path_for(row_index)
+        if p.exists():
+            with self._lock:
+                self._access_times[row_index] = time.monotonic()
+            return p
+        return None
+
+    def put(self, row_index: int, image_bytes: bytes) -> Path:
+        """Write image bytes to cache, evicting LRU if needed."""
+        p = self._path_for(row_index)
+        p.write_bytes(image_bytes)
+        size = len(image_bytes)
+        with self._lock:
+            self._access_times[row_index] = time.monotonic()
+            self._total_bytes += size
+            self._evict_if_needed()
+        return p
+
+    def _evict_if_needed(self):
+        """Evict LRU entries until total size is within bounds. Caller holds lock."""
+        while self._total_bytes > self._max_bytes and self._access_times:
+            # Find LRU entry
+            lru_idx = min(self._access_times, key=self._access_times.get)
+            p = self._path_for(lru_idx)
+            try:
+                size = p.stat().st_size
+                p.unlink()
+                self._total_bytes -= size
+            except OSError:
+                pass
+            del self._access_times[lru_idx]
+
+    def ensure_cached(self, row_index: int) -> Path | None:
+        """Get cached path or fetch + cache. Returns path or None on failure."""
+        p = self.get_path(row_index)
+        if p is not None:
+            return p
+        img_bytes = fetch_image_bytes(row_index)
+        if img_bytes is None:
+            return None
+        return self.put(row_index, img_bytes)
+
+    def prefetch(self, row_indices: list[int]):
+        """Background-fetch a batch of images (skips already cached)."""
+        to_fetch = [idx for idx in row_indices if self.get_path(idx) is None]
+        if not to_fetch:
+            return
+
+        def _worker():
+            for idx in to_fetch:
+                try:
+                    self.ensure_cached(idx)
+                except Exception as e:
+                    logger.debug("Prefetch failed for row %d: %s", idx, e)
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
+
+# Module-level singleton
+image_cache = ImageCache()

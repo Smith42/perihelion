@@ -3,8 +3,9 @@
 import random
 from dash import dcc, html
 import dash_bootstrap_components as dbc
+import plotly.graph_objects as go
 
-from src.galaxy_profiles import GALAXY_PROFILES, GALAXY_IDS, NUM_GALAXIES
+from src.galaxy_profiles import get_display_name
 
 
 def get_app_theme() -> str:
@@ -94,7 +95,7 @@ def get_app_theme() -> str:
                 border-color: rgba(167,139,250,0.5);
                 transform: translateY(-2px);
             }
-            
+
             .galaxy-card:active {
                 animation: galaxyClick 0.2s ease;
             }
@@ -201,6 +202,36 @@ def get_app_theme() -> str:
                 color: rgba(255,255,255,0.6);
             }
 
+            /* Progress dashboard */
+            .progress-dashboard {
+                background: rgba(255,255,255,0.03);
+                border: 1px solid rgba(255,255,255,0.08);
+                border-radius: 16px;
+                padding: 20px;
+                backdrop-filter: blur(20px);
+            }
+
+            .progress-stat {
+                text-align: center;
+                padding: 8px;
+            }
+
+            .progress-stat-value {
+                font-family: 'Playfair Display', serif;
+                font-size: 1.6rem;
+                font-weight: 700;
+                color: #fff;
+            }
+
+            .progress-stat-label {
+                font-family: 'Outfit', sans-serif;
+                font-size: 0.65rem;
+                font-weight: 600;
+                color: rgba(255,255,255,0.35);
+                letter-spacing: 2px;
+                text-transform: uppercase;
+            }
+
             /* Counter */
             .comparison-counter {
                 font-family: 'Outfit', sans-serif;
@@ -278,81 +309,38 @@ def _create_star_field(n=80):
     )
 
 
-def create_galaxy_card(galaxy_id, side="left", is_champion=False):
-    """Build a single galaxy profile card -- image + name + description."""
-    profile = GALAXY_PROFILES[galaxy_id]
+def create_galaxy_card(row_index: int, side: str = "left"):
+    """Build a single galaxy profile card — image + name."""
+    name = get_display_name(row_index)
     btn_id = f"{side}-card-btn"
-    
-    card_style = {
-        "border": "none",
-        "padding": "0",
-        "textAlign": "left",
-        "width": "100%",
-    }
-    
-    # Add champion styling
-    if is_champion:
-        card_style["boxShadow"] = "0 0 20px rgba(255, 215, 0, 0.5)"
-        card_style["border"] = "2px solid rgba(255, 215, 0, 0.7)"
-        card_style["borderRadius"] = "12px"
-        card_style["animation"] = "galaxyWin 1.5s ease-in-out"
-    
-    # Get description text
-    description = profile.get('description', profile.get('bio', ''))
-    
-    card_contents = [
-        html.Img(
-            src=f"/galaxy-images/{galaxy_id}.jpg",
-            className="galaxy-card-image",
-        ),
-        html.Div(
-            [
-                html.Span(profile["name"], style={"marginRight": "8px"}),
-                html.I(
-                    className="fas fa-crown",
-                    style={
-                        "color": "#FFD700",
-                        "fontSize": "0.9rem",
-                        "display": "inline" if is_champion else "none",
-                    }
-                ),
-            ],
-            className="galaxy-card-name",
-        ),
-        # Add description below the name
-        html.Div(
-            description,
-            className="galaxy-card-description",
-            style={
-                "fontSize": "0.8rem",
-                "color": "rgba(255,255,255,0.7)", 
-                "padding": "8px 16px 16px",
-                "lineHeight": "1.4",
-                "fontFamily": "'Outfit', sans-serif",
-            }
-        ) if description else None,
-    ]
-    
-    # Filter out None elements
-    card_contents = [item for item in card_contents if item is not None]
 
     return html.Button(
-        card_contents,
+        [
+            html.Img(
+                src=f"/galaxy-images/{row_index}.jpg",
+                className="galaxy-card-image",
+            ),
+            html.Div(name, className="galaxy-card-name"),
+        ],
         className="galaxy-card",
         id=btn_id,
         n_clicks=0,
-        style=card_style,
+        style={
+            "border": "none",
+            "padding": "0",
+            "textAlign": "left",
+            "width": "100%",
+        },
     )
 
 
-def create_arena(left_id=None, right_id=None, champion_id=None):
+def create_arena(left_idx=None, right_idx=None):
     """Build the two-card arena with VS divider."""
-    if left_id is None or right_id is None:
-        # All done state
+    if left_idx is None or right_idx is None:
         return html.Div(
             [
                 html.Div(
-                    "Champion Reign Complete!",
+                    "Tournament Complete!",
                     style={
                         "fontFamily": "'Playfair Display', serif",
                         "fontSize": "1.8rem",
@@ -362,8 +350,8 @@ def create_arena(left_id=None, right_id=None, champion_id=None):
                     },
                 ),
                 html.P(
-                    "The current champion has faced all possible challengers. "
-                    "Check the leaderboard below for the final rankings!",
+                    "The top galaxies have been identified. "
+                    "Check the leaderboard below for final rankings!",
                     style={"color": "rgba(255,255,255,0.5)", "maxWidth": "400px", "margin": "0 auto 24px"},
                 ),
                 dbc.Button(
@@ -384,14 +372,10 @@ def create_arena(left_id=None, right_id=None, champion_id=None):
             className="all-done-card",
         )
 
-    # Determine champion status
-    left_is_champion = champion_id is not None and left_id == champion_id
-    right_is_champion = champion_id is not None and right_id == champion_id
-
     return dbc.Row(
         [
             dbc.Col(
-                create_galaxy_card(left_id, side="left", is_champion=left_is_champion),
+                create_galaxy_card(left_idx, side="left"),
                 width=5,
             ),
             dbc.Col(
@@ -399,7 +383,7 @@ def create_arena(left_id=None, right_id=None, champion_id=None):
                 width=2, className="d-flex align-items-center justify-content-center",
             ),
             dbc.Col(
-                create_galaxy_card(right_id, side="right", is_champion=right_is_champion),
+                create_galaxy_card(right_idx, side="right"),
                 width=5,
             ),
         ],
@@ -408,23 +392,115 @@ def create_arena(left_id=None, right_id=None, champion_id=None):
     )
 
 
+def create_progress_dashboard(info: dict):
+    """Build the tournament progress dashboard."""
+    current_round = info.get("current_round", 0)
+    pool_size = info.get("pool_size", 0)
+    total_comps = info.get("total_comparisons", 0)
+    eliminated_count = info.get("eliminated_count", 0)
+    est_remaining = info.get("est_remaining_this_round", 0)
+    elo_values = info.get("elo_values", [])
+    tournament_complete = info.get("tournament_complete", False)
+
+    # Stats row
+    status_text = "COMPLETE" if tournament_complete else f"ROUND {current_round}"
+    stats_row = dbc.Row(
+        [
+            dbc.Col(html.Div([
+                html.Div(status_text, className="progress-stat-value"),
+                html.Div("STATUS", className="progress-stat-label"),
+            ], className="progress-stat"), width=3),
+            dbc.Col(html.Div([
+                html.Div(str(pool_size), className="progress-stat-value"),
+                html.Div("ACTIVE", className="progress-stat-label"),
+            ], className="progress-stat"), width=3),
+            dbc.Col(html.Div([
+                html.Div(str(total_comps), className="progress-stat-value"),
+                html.Div("COMPARISONS", className="progress-stat-label"),
+            ], className="progress-stat"), width=3),
+            dbc.Col(html.Div([
+                html.Div(str(eliminated_count), className="progress-stat-value"),
+                html.Div("ELIMINATED", className="progress-stat-label"),
+            ], className="progress-stat"), width=3),
+        ],
+        className="mb-3",
+    )
+
+    # ELO distribution histogram
+    if elo_values:
+        fig = go.Figure(data=[go.Histogram(
+            x=elo_values,
+            nbinsx=30,
+            marker_color="rgba(167,139,250,0.6)",
+            marker_line_color="rgba(167,139,250,0.8)",
+            marker_line_width=1,
+        )])
+        fig.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font_color="rgba(255,255,255,0.5)",
+            font_family="Outfit",
+            font_size=10,
+            margin=dict(l=30, r=10, t=10, b=30),
+            height=120,
+            xaxis=dict(
+                gridcolor="rgba(255,255,255,0.05)",
+                title_text="ELO Rating",
+                title_font_size=9,
+            ),
+            yaxis=dict(
+                gridcolor="rgba(255,255,255,0.05)",
+                title_text="Count",
+                title_font_size=9,
+            ),
+        )
+        histogram = dcc.Graph(
+            figure=fig,
+            config={"displayModeBar": False},
+            style={"height": "120px"},
+        )
+    else:
+        histogram = html.Div()
+
+    # Remaining estimate
+    remaining_text = (
+        "Tournament complete!" if tournament_complete
+        else f"~{est_remaining} comparisons remaining this round"
+    )
+
+    return html.Div(
+        [
+            stats_row,
+            histogram,
+            html.Div(
+                remaining_text,
+                style={
+                    "textAlign": "center",
+                    "fontSize": "0.7rem",
+                    "color": "rgba(255,255,255,0.3)",
+                    "marginTop": "8px",
+                },
+            ),
+        ],
+        className="progress-dashboard",
+    )
+
+
 def create_leaderboard_rows(leaderboard_data):
     """Build leaderboard row elements from sorted data."""
     rows = []
     for i, entry in enumerate(leaderboard_data):
-        gid = entry["id"]
-        profile = GALAXY_PROFILES.get(gid, {})
+        idx = entry["id"]
+        name = get_display_name(idx)
         rank = i + 1
-        # Medal for top 3
-        rank_display = {1: "1", 2: "2", 3: "3"}.get(rank, str(rank))
         rank_color = {1: "#FFD700", 2: "#C0C0C0", 3: "#CD7F32"}.get(rank, "rgba(255,255,255,0.4)")
 
         rows.append(
             html.Div(
                 [
-                    html.Span(rank_display, className="leaderboard-rank", style={"color": rank_color}),
-                    html.Img(src=f"/galaxy-images/{gid}.jpg", className="leaderboard-thumb"),
-                    html.Span(profile.get("name", gid[:8]), className="leaderboard-name"),
+                    html.Span(str(rank), className="leaderboard-rank", style={"color": rank_color}),
+                    html.Img(src=f"/galaxy-images/{idx}.jpg", className="leaderboard-thumb"),
+                    html.Span(name, className="leaderboard-name"),
                     html.Span(f"{entry['elo']:.0f}", className="leaderboard-elo"),
                 ],
                 className="leaderboard-row",
@@ -464,7 +540,13 @@ def create_layout():
             html.Div(id="arena-container", style={"position": "relative", "zIndex": "10"}),
 
             # Spacer
-            html.Div(style={"height": "32px"}),
+            html.Div(style={"height": "24px"}),
+
+            # Progress dashboard
+            html.Div(id="progress-dashboard-container", style={"position": "relative", "zIndex": "10"}),
+
+            # Spacer
+            html.Div(style={"height": "24px"}),
 
             # Leaderboard
             html.Div(
@@ -488,9 +570,12 @@ def create_layout():
             # Stores
             dcc.Store(id="seen-pairs", data=[]),
             dcc.Store(id="current-pair", data=None),
-            dcc.Store(id="current-champion", data=None),
             dcc.Store(id="comparison-count", data=0),
+            dcc.Store(id="tournament-info", data={}),
             dcc.Store(id="session-id", data=""),
+
+            # Interval for progress updates
+            dcc.Interval(id="progress-interval", interval=10000, n_intervals=0),
         ],
         fluid=True,
         className="py-0",
