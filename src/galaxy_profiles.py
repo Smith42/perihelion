@@ -30,6 +30,12 @@ def get_image_path(row_index: int):
     return image_cache.ensure_cached(row_index)
 
 
+def register_metadata(metadata_map: dict[int, dict]):
+    """Bulk-register row metadata from streaming init (keyed by sequential ID)."""
+    with _lock:
+        _metadata_cache.update(metadata_map)
+
+
 def prefetch_metadata(row_indices: list[int]):
     """Batch-fetch and cache metadata for the given row indices."""
     to_fetch = []

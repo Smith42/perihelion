@@ -9,11 +9,8 @@ from flask import send_file, abort
 from src.components import get_app_theme, create_layout
 from src.callbacks import register_callbacks
 from src import elo
-from src.galaxy_data_loader import (
-    get_dataset_size,
-    sample_pool_indices,
-    image_cache,
-)
+from src.galaxy_data_loader import sample_pool_streaming, image_cache
+from src.galaxy_profiles import register_metadata
 from src.config import POOL_SIZE
 
 logging.basicConfig(
@@ -49,11 +46,11 @@ def create_app() -> dash.Dash:
     logger.info("Loading tournament state...")
     loaded = elo.load_tournament_state()
     if not loaded:
-        logger.info("No existing tournament found. Sampling new pool...")
+        logger.info("No existing tournament found. Streaming new pool...")
         try:
-            total = get_dataset_size()
-            logger.info("Dataset has %d rows. Sampling pool of %d...", total, POOL_SIZE)
-            pool = sample_pool_indices(total, POOL_SIZE)
+            logger.info("Streaming pool of %d galaxies from HF dataset...", POOL_SIZE)
+            pool, metadata_map = sample_pool_streaming(POOL_SIZE)
+            register_metadata(metadata_map)
             elo.initialize_tournament(pool)
         except Exception as e:
             logger.error("Failed to initialize tournament: %s", e)

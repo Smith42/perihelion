@@ -1,4 +1,4 @@
-"""HF dataset-viewer API client + disk-based LRU image cache."""
+"""Galaxy data loading: HF Datasets streaming sampler + disk-based LRU image cache."""
 
 import logging
 import os
@@ -225,3 +225,63 @@ class ImageCache:
 
 # Module-level singleton
 image_cache = ImageCache()
+
+
+# ---------------------------------------------------------------------------
+# Streaming pool sampler
+# ---------------------------------------------------------------------------
+
+def sample_pool_streaming(pool_size: int) -> tuple[list[int], dict[int, dict]]:
+    """Stream pool_size shuffled galaxies from HF Datasets, pre-caching images.
+
+    Returns:
+        ids: sequential ints 0..N-1 used as galaxy IDs throughout the app
+        metadata_map: {id -> row_dict (without image column)} for display names
+    """
+    from datasets import load_dataset
+    from datasets import Image as HFImage
+
+    logger.info(
+        "Streaming %d galaxies from %s (shuffle buffer=10000)...",
+        pool_size,
+        DATASET_ID,
+    )
+
+    ds = load_dataset(
+        DATASET_ID,
+        DATASET_CONFIG,
+        split=DATASET_SPLIT,
+        streaming=True,
+        token=HF_TOKEN if HF_TOKEN else None,
+    )
+
+    # Request raw bytes instead of decoded PIL images to avoid pillow dependency
+    features = getattr(ds, "features", None)
+    if features and IMAGE_COLUMN in features:
+        ds = ds.cast_column(IMAGE_COLUMN, HFImage(decode=False))
+
+    ds = ds.shuffle(seed=random.randint(0, 2**32 - 1), buffer_size=10_000)
+    ds = ds.take(pool_size)
+
+    ids: list[int] = []
+    metadata_map: dict[int, dict] = {}
+
+    for i, row in enumerate(ds):
+        img_col = row.get(IMAGE_COLUMN)
+        img_bytes: bytes | None = None
+        if isinstance(img_col, dict):
+            img_bytes = img_col.get("bytes")
+
+        if img_bytes:
+            image_cache.put(i, img_bytes)
+        else:
+            logger.warning("No image bytes for streamed row %d", i)
+
+        metadata_map[i] = {k: v for k, v in row.items() if k != IMAGE_COLUMN}
+        ids.append(i)
+
+        if (i + 1) % 100 == 0:
+            logger.info("Streamed %d/%d galaxies", i + 1, pool_size)
+
+    logger.info("Finished streaming %d galaxies", len(ids))
+    return ids, metadata_map
