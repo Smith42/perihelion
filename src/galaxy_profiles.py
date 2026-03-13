@@ -35,6 +35,15 @@ def register_metadata(metadata_map: dict[int, dict]):
         _metadata_cache.update(metadata_map)
 
 
+def get_row_index_by_id(display_name: str) -> int | None:
+    """Reverse-lookup: return the row index for a given display name, or None."""
+    with _lock:
+        for row_index, meta in _metadata_cache.items():
+            if meta is not None and str(meta.get(ID_COLUMN)) == display_name:
+                return row_index
+    return None
+
+
 def _get_metadata(row_index: int) -> dict | None:
     with _lock:
         return _metadata_cache.get(row_index)

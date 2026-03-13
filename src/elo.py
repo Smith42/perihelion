@@ -19,6 +19,14 @@ from src.config import (
     HF_TOKEN,
 )
 
+# Imported lazily to avoid circular import at module load time
+def _get_display_name(row_index: int) -> str:
+    try:
+        from src.galaxy_profiles import get_display_name
+        return get_display_name(row_index)
+    except Exception:
+        return str(row_index)
+
 logger = logging.getLogger(__name__)
 
 STATE_DIR = Path("state")
@@ -45,24 +53,44 @@ class EloState:
         self.dataset_id = dataset_id
 
     def to_dict(self) -> dict:
+        named_elo = {
+            _get_display_name(idx): self.elo_ratings.get(idx, DEFAULT_ELO)
+            for idx in self.pool
+        }
         rankings = sorted(
-            [{"galaxy_id": idx, "elo": self.elo_ratings.get(idx, DEFAULT_ELO)} for idx in self.pool],
+            [{"galaxy_id": gid, "elo": elo} for gid, elo in named_elo.items()],
             key=lambda x: x["elo"],
             reverse=True,
         )
         return {
-            "pool": self.pool,
-            "elo_ratings": {str(k): v for k, v in self.elo_ratings.items()},
+            "pool": [_get_display_name(idx) for idx in self.pool],
+            "elo_ratings": named_elo,
             "total_comparisons": self.total_comparisons,
             "dataset_id": self.dataset_id,
             "rankings": rankings,
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> EloState:
+    def from_dict(cls, d: dict, id_to_row: dict[str, int] | None = None) -> EloState:
+        """Restore from a saved dict.
+
+        If *id_to_row* is provided (display-name → row-index map), pool entries
+        and elo_ratings keys are treated as display names and converted back to
+        row indices.  Entries that have no mapping are silently dropped.
+        """
+        if id_to_row is not None:
+            pool = [id_to_row[gid] for gid in d["pool"] if gid in id_to_row]
+            elo_ratings = {
+                id_to_row[gid]: v
+                for gid, v in d["elo_ratings"].items()
+                if gid in id_to_row
+            }
+        else:
+            pool = d["pool"]
+            elo_ratings = {int(k): v for k, v in d["elo_ratings"].items()}
         return cls(
-            pool=d["pool"],
-            elo_ratings={int(k): v for k, v in d["elo_ratings"].items()},
+            pool=pool,
+            elo_ratings=elo_ratings,
             total_comparisons=d.get("total_comparisons", 0),
             dataset_id=d.get("dataset_id", ""),
         )
@@ -145,8 +173,20 @@ def load_elo_state() -> bool:
         logger.info("Saved state is old format — starting fresh")
         return False
 
+    # Build reverse map: display name → row index (requires metadata to be loaded first)
+    id_to_row: dict[str, int] | None = None
+    pool_sample = raw["pool"]
+    if pool_sample and isinstance(pool_sample[0], str):
+        # New format: pool contains display names — reverse-map via metadata cache
+        from src.galaxy_profiles import get_row_index_by_id
+        id_to_row = {}
+        for gid in raw["pool"]:
+            row = get_row_index_by_id(gid)
+            if row is not None:
+                id_to_row[gid] = row
+
     with _lock:
-        _state = EloState.from_dict(raw)
+        _state = EloState.from_dict(raw, id_to_row=id_to_row)
     _init_scheduler()
     _save_state()
     logger.info("Restored ELO state: %d galaxies, %d comparisons",
