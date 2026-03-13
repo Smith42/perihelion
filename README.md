@@ -1,8 +1,8 @@
 ---
-title: g-Harmony
+title: Perihelion
 emoji: 🌌
 colorFrom: blue
-colorTo: gray
+colorTo: pink
 sdk: gradio
 sdk_version: 6.9.0
 app_file: app.py
