@@ -17,6 +17,7 @@ from tqdm import tqdm
 import json
 from PIL import Image
 import io
+import math
 
 # Configure Google API key
 client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
@@ -33,9 +34,9 @@ def create_galaxy_prompt(example):
     """
     # Base prompt
     base_prompt = """
-Describe this image of a galaxy in detail. Only describe the galaxy, not the foreground objects surrounding it. Act like a citizen scientist. Do not converse please, just give your description in a scientific tone.
+    You are a galaxy on a dating app. Based on the image and your stats below, write a short, witty Tinder-style bio for this galaxy. Include flirty references to your physical features (arms, bulge, shape, etc.) and any quirks from the data. Keep it to 2-3 sentences max. Be playful and creative.
 
-Here is additional information about this galaxy:
+Here are your stats:
 """
     
     # Helper function to format values appropriately
@@ -46,28 +47,6 @@ Here is additional information about this galaxy:
             
         # Handle numeric values
         if isinstance(value, (int, float)):
-            # Format percentages
-            if key.endswith('_fraction'):
-                return f"{value:.2f}"
-            # Format astronomical magnitudes 
-            elif key.startswith('mag_') or key.find('_mag_') > 0:
-                return f"{value:.2f}"
-            # Format coordinates
-            elif key in ['ra', 'dec', 'ra_photoz', 'dec_photoz', 'ra_ossy', 'dec_ossy', 'ra_alf', 'dec_alf', 'ra_jhu', 'dec_jhu']:
-                return f"{value:.6f}"
-            # Format redshifts
-            elif key in ['redshift', 'photo_z', 'redshift_nsa', 'redshift_ossy', 'spec_z']:
-                return f"{value:.6f}"
-            # Format error values
-            elif key.find('err') > 0 or key.startswith('e_') or key.startswith('sig'):
-                return f"{value:.6f}"
-            # Format angular sizes
-            elif key.find('theta') > 0 or key.find('phi') > 0:
-                return f"{value:.4f}"
-            # Format mass and SFR values that are in log scale
-            elif (key.startswith('mass_') or key.startswith('sfr_') or key.startswith('ssfr_')) and (-20 < value < 20):
-                return f"{value:.4f} (log10)"
-            # Default number formatting
             return f"{value:.4f}" if isinstance(value, float) else f"{value}"
             
         # String values
@@ -75,83 +54,90 @@ Here is additional information about this galaxy:
     
     # Group metadata into categories
     categories = {
-        "Basic Information": [
-            'dr8_id', 'iauname', 'brickid', 'objid',
-            'ra', 'dec', 'photoz_id', 'ra_photoz', 'dec_photoz'
-        ],
-        
-        "Redshift Information": [
-            'redshift', 'photo_z', 'photo_zerr', 'spec_z', 'redshift_nsa', 'redshift_ossy'
-        ],
-        
-        "Size and Shape Measurements": [
-            'est_petro_th50', 'est_petro_th50_kpc', 'petro_theta', 'petro_th50', 'petro_th90',
-            'petro_phi50', 'petro_phi90', 'petro_ba50', 'petro_ba90', 'elpetro_ba', 'elpetro_phi',
-            'elpetro_theta_r', 'sersic_n', 'sersic_ba', 'sersic_phi'
-        ],
-        
-        "DESI Magnitudes": [
-            'mag_g_desi', 'mag_r_desi', 'mag_z_desi'
-        ],
-        
-        "Legacy Survey Magnitudes": [
-            'mag_f', 'mag_n', 'mag_u', 'mag_g', 'mag_r', 'mag_i', 'mag_z', 'u_minus_r'
-        ],
-        
-        "Absolute Magnitudes": [
-            'mag_abs_g_photoz', 'mag_abs_r_photoz', 'mag_abs_z_photoz',
-            'elpetro_absmag_f', 'elpetro_absmag_n', 'elpetro_absmag_u', 'elpetro_absmag_g',
-            'elpetro_absmag_r', 'elpetro_absmag_i', 'elpetro_absmag_z'
-        ],
-        
-        "Sersic Profile Measurements": [
-            'sersic_nmgy_f', 'sersic_nmgy_n', 'sersic_nmgy_u', 'sersic_nmgy_g',
-            'sersic_nmgy_r', 'sersic_nmgy_i', 'sersic_nmgy_z'
-        ],
-        
-        "Mass Estimates": [
-            'elpetro_mass', 'elpetro_mass_log', 'mass_inf_photoz', 'mass_med_photoz', 'mass_sup_photoz'
-        ],
-        
-        "Star Formation Properties": [
-            'sfr_inf_photoz', 'sfr_sup_photoz', 'ssfr_inf_photoz', 'ssfr_med_photoz', 'ssfr_sup_photoz',
-            'fibre_sfr_avg', 'fibre_sfr_entropy', 'fibre_sfr_median', 'fibre_sfr_mode',
-            'fibre_sfr_p16', 'fibre_sfr_p2p5', 'fibre_sfr_p84', 'fibre_sfr_p97p5',
-            'fibre_ssfr_avg', 'fibre_ssfr_entropy', 'fibre_ssfr_median', 'fibre_ssfr_mode',
-            'fibre_ssfr_p16', 'fibre_ssfr_p2p5', 'fibre_ssfr_p84', 'fibre_ssfr_p97p5',
-            'total_ssfr_avg', 'total_ssfr_entropy', 'total_ssfr_flag', 'total_ssfr_median',
-            'total_ssfr_mode', 'total_ssfr_p16', 'total_ssfr_p2p5', 'total_ssfr_p84', 'total_ssfr_p97p5',
-            'total_sfr_avg', 'total_sfr_entropy', 'total_sfr_flag', 'total_sfr_median',
-            'total_sfr_mode', 'total_sfr_p16', 'total_sfr_p2p5', 'total_sfr_p84', 'total_sfr_p97p5'
-        ],
-        
-        "Morphology (Galaxy Zoo)": [
-            'smooth-or-featured_smooth_fraction', 'smooth-or-featured_featured-or-disk_fraction',
-            'smooth-or-featured_artifact_fraction', 'disk-edge-on_yes_fraction', 'disk-edge-on_no_fraction',
-            'has-spiral-arms_yes_fraction', 'has-spiral-arms_no_fraction', 'bar_strong_fraction',
-            'bar_weak_fraction', 'bar_no_fraction', 'bulge-size_dominant_fraction',
-            'bulge-size_large_fraction', 'bulge-size_moderate_fraction', 'bulge-size_small_fraction',
-            'bulge-size_none_fraction', 'how-rounded_round_fraction', 'how-rounded_in-between_fraction',
-            'how-rounded_cigar-shaped_fraction', 'edge-on-bulge_boxy_fraction', 'edge-on-bulge_none_fraction',
-            'edge-on-bulge_rounded_fraction', 'spiral-winding_tight_fraction', 'spiral-winding_medium_fraction',
-            'spiral-winding_loose_fraction', 'spiral-arm-count_1_fraction', 'spiral-arm-count_2_fraction',
-            'spiral-arm-count_3_fraction', 'spiral-arm-count_4_fraction', 'spiral-arm-count_more-than-4_fraction',
-            'spiral-arm-count_cant-tell_fraction', 'merging_none_fraction', 'merging_minor-disturbance_fraction',
-            'merging_major-disturbance_fraction', 'merging_merger_fraction'
-        ],
-        
-        "OSSY Spectroscopic Properties": [
-            'dr7objid_ossy', 'log_l_oiii', 'fwhm', 'e_fwhm', 'equiv_width', 'log_l_ha',
-            'log_m_bh', 'upper_e_log_m_bh', 'lower_e_log_m_bh', 'log_bolometric_l'
-        ],
-        
-        "HI Properties": [
-            'W50', 'sigW', 'W20', 'HIflux', 'sigflux', 'SNR', 'RMS', 'Dist', 'sigDist', 'logMH', 'siglogMH'
-        ],
-        
-        "Other Measurements": [
-            'sky_separation_arcsec_from_photoz', 'elpetro_flux_r'
-        ]
+      "Smooth or Featured": [
+        "smooth-or-featured-euclid_smooth_fraction",
+        "smooth-or-featured-euclid_featured-or-disk_fraction",
+        "smooth-or-featured-euclid_problem_fraction"
+      ],
+    
+      "Disk Edge-On": [
+        "disk-edge-on-euclid_yes_fraction",
+        "disk-edge-on-euclid_no_fraction"
+      ],
+    
+      "Spiral Arms": [
+        "has-spiral-arms-euclid_yes_fraction",
+        "has-spiral-arms-euclid_no_fraction"
+      ],
+    
+      "Bar": [
+        "bar-euclid_strong_fraction",
+        "bar-euclid_weak_fraction",
+        "bar-euclid_no_fraction"
+      ],
+    
+      "Bulge Size": [
+        "bulge-size-euclid_dominant_fraction",
+        "bulge-size-euclid_large_fraction",
+        "bulge-size-euclid_moderate_fraction",
+        "bulge-size-euclid_small_fraction",
+        "bulge-size-euclid_none_fraction"
+      ],
+    
+      "How Rounded": [
+        "how-rounded-euclid_round_fraction",
+        "how-rounded-euclid_in-between_fraction",
+        "how-rounded-euclid_cigar-shaped_fraction"
+      ],
+    
+      "Edge-On Bulge": [
+        "edge-on-bulge-euclid_boxy_fraction",
+        "edge-on-bulge-euclid_none_fraction",
+        "edge-on-bulge-euclid_rounded_fraction"
+      ],
+    
+      "Spiral Winding": [
+        "spiral-winding-euclid_tight_fraction",
+        "spiral-winding-euclid_medium_fraction",
+        "spiral-winding-euclid_loose_fraction"
+      ],
+    
+      "Spiral Arm Count": [
+        "spiral-arm-count-euclid_1_fraction",
+        "spiral-arm-count-euclid_2_fraction",
+        "spiral-arm-count-euclid_3_fraction",
+        "spiral-arm-count-euclid_4_fraction",
+        "spiral-arm-count-euclid_more-than-4_fraction",
+        "spiral-arm-count-euclid_cant-tell_fraction"
+      ],
+    
+      "Merging": [
+        "merging-euclid_none_fraction",
+        "merging-euclid_minor-disturbance_fraction",
+        "merging-euclid_major-disturbance_fraction",
+        "merging-euclid_merger_fraction"
+      ],
+    
+      "Clumps": [
+        "clumps-euclid_yes_fraction",
+        "clumps-euclid_no_fraction"
+      ],
+    
+      "Problem": [
+        "problem-euclid_star_fraction",
+        "problem-euclid_artifact_fraction",
+        "problem-euclid_zoom_fraction"
+      ],
+    
+      "Artifact": [
+        "artifact-euclid_satellite_fraction",
+        "artifact-euclid_scattered_fraction",
+        "artifact-euclid_diffraction_fraction",
+        "artifact-euclid_ray_fraction",
+        "artifact-euclid_saturation_fraction",
+        "artifact-euclid_other_fraction",
+        "artifact-euclid_ghost_fraction"
+      ]
     }
     
     # Build the prompt with organized scientific data
@@ -161,7 +147,7 @@ Here is additional information about this galaxy:
         # Check if we have any values for this category
         category_values = {}
         for key in keys:
-            if key in example and example[key] is not None:
+            if key in example and example[key] is not None and not (isinstance(example[key], float) and math.isnan(example[key])):
                 formatted_value = format_value(key, example[key])
                 if formatted_value is not None:
                     category_values[key] = formatted_value
@@ -178,54 +164,118 @@ Here is additional information about this galaxy:
     # Add a final instruction
     formatted_prompt += """
 
-Based on this information and what you see in the image, provide a detailed scientific description of this galaxy. Do not include references to the values above, simply use them to roughly guide your description.
+Based on this information and what you see in the image, write the galaxy's dating profile bio. Don't reference the raw numbers — just use them to inform your personality and pickup lines. Respond only with the caption, nothing else. Start your answer with 'Bio:'
 """
     
     return formatted_prompt
 
 
-def caption_image(image, information, conversation=False):
+def generate_galaxy_name(image, information):
+    """Generate a creative dating-app display name for a galaxy using Gemini Flash 2.0.
+
+    Inspects the galaxy's morphological metadata to pick out standout traits,
+    then asks Gemini to mint a short, memorable profile name.
+
+    Args:
+        image: PIL Image of the galaxy.
+        information: Dictionary containing galaxy metadata.
+
+    Returns:
+        str: A 1-3 word dating-style display name.
+    """
+    # Collect notable morphological traits to steer the name
+    traits = []
+
+    def _above(key, threshold=0.5):
+        val = information.get(key)
+        return val is not None and not (isinstance(val, float) and math.isnan(val)) and val > threshold
+
+    if _above("has-spiral-arms-euclid_yes_fraction", 0.5):
+        traits.append("spiral arms")
+    if _above("bar-euclid_strong_fraction", 0.3):
+        traits.append("strong bar")
+    if _above("merging-euclid_merger_fraction", 0.3):
+        traits.append("currently merging")
+    if _above("how-rounded-euclid_cigar-shaped_fraction", 0.3):
+        traits.append("cigar-shaped")
+    if _above("bulge-size-euclid_dominant_fraction", 0.3):
+        traits.append("dominant bulge")
+    if _above("smooth-or-featured-euclid_smooth_fraction", 0.7):
+        traits.append("very smooth")
+    if _above("disk-edge-on-euclid_yes_fraction", 0.5):
+        traits.append("edge-on disk")
+    if _above("spiral-winding-euclid_tight_fraction", 0.5):
+        traits.append("tightly wound spirals")
+    if _above("spiral-winding-euclid_loose_fraction", 0.5):
+        traits.append("loosely wound spirals")
+    if _above("clumps-euclid_yes_fraction", 0.5):
+        traits.append("clumpy")
+
+    trait_hint = (
+        f" This galaxy has notable traits: {', '.join(traits)}."
+        if traits
+        else ""
+    )
+
+    prompt = (
+        "You are naming a galaxy for its dating app profile. Give it a short, "
+        "memorable, flirty display name (1-3 words max) that sounds like a fun "
+        "username or nickname. It should hint at the galaxy's appearance or "
+        f"personality.{trait_hint}\n\n"
+        "Examples of good names: \"Spiral Daddy\", \"Thicc Bulge\", \"Arms4Days\", "
+        "\"Smooth Operator\", \"Merger Maven\", \"Bar Star\", \"Edge Lord\", "
+        "\"Clumpy Boi\", \"Tightly Wound\"\n\n"
+        "Respond with ONLY the name, nothing else."
+    )
+
+    response = client.models.generate_content(
+        contents=[prompt, image],
+        model="gemini-3-flash-preview",
+    )
+
+    return response.text.strip().strip('"').strip("'")
+
+
+def caption_image(image, information):
     """Generate caption for an image using Gemini Flash 2.0"""
     # Prepare the prompt
-    prompt = create_cosmo_conversation_prompt(information) if conversation else create_galaxy_prompt(information)
-    
+    prompt = create_galaxy_prompt(information)
+
     # Generate response from Gemini
     response = client.models.generate_content(
         contents=[prompt, image],
-        model="gemini-2.0-flash",
+        model="gemini-3-flash-preview",
     )
 
     return response.text
 
-def process_example(example, conversation=False):
+def process_example(example):
     """Process a single example in parallel"""
     try:
-        image = Image.open(io.BytesIO(example['image']['bytes']))
-        image_id = example['dr8_id']
-        caption = caption_image(image, example, conversation=conversation)
-        
-        if conversation:
-            return {
-                'dr8_id': image_id,
-                'conversation': caption['conversation']
-            }
+        img = example['image']
+        if isinstance(img, Image.Image):
+            image = img
+        elif isinstance(img, dict) and 'bytes' in img:
+            image = Image.open(io.BytesIO(img['bytes']))
         else:
-            return {
-                'dr8_id': image_id,
-                'caption': caption
-            }
+            image = Image.open(io.BytesIO(img))
+
+        image_id = example['id_str']
+        name = generate_galaxy_name(image, example)
+        caption = caption_image(image, example)
+
+        return {
+            'id_str': image_id,
+            'name': name,
+            'caption': caption
+        }
     except Exception as e:
-        print(f"Error processing image {example.get('dr8_id', 'unknown')}: {str(e)}")
-        if conversation:
-            return {
-                'dr8_id': example['dr8_id'],
-                'conversation': None
-            }
-        else:
-            return {
-                'dr8_id': example['dr8_id'],
-                'caption': None
-            }
+        print(f"Error processing image {example.get('id_str', 'unknown')}: {str(e)}")
+        return {
+            'id_str': example['id_str'],
+            'name': None,
+            'caption': None
+        }
 
 def save_results(results, filename):
     """Save captioning results to JSON file"""
@@ -234,12 +284,8 @@ def save_results(results, filename):
 
 def main():
     # Check for existing results
-    conversation = False
-    split = "validation"
-    if conversation:
-        checkpoint_file = f"galaxy_convos_{split}_partial.json"
-    else:
-        checkpoint_file = f"galaxy_caption_{split}_partial.json"
+    split = "test"
+    checkpoint_file = f"galaxy_caption_{split}_partial.json"
     results = []
     completed_count = 0
     
@@ -253,9 +299,7 @@ def main():
             print("Couldn't load checkpoint. Starting fresh.")
     
     # Load datasets and use skip() to efficiently skip processed examples
-    galaxies = load_dataset("mwalmsley/gz_euclid", split=split, streaming=True)
-    print(galaxies)
-    exit(0)
+    galaxies = load_dataset("mwalmsley/gz_euclid", "tiny", split=split, streaming=True)
  
     # Skip already processed examples using HF's skip() method
     if completed_count > 0:
@@ -270,10 +314,10 @@ def main():
         return
 
     remaining_count = max_examples - completed_count
-    batch_size = 1024
+    batch_size = 8
     dataset = dataset.batch(batch_size=batch_size)
-    num_processes = 64
-    proc_example = partial(process_example, conversation=conversation)
+    num_processes = 1
+    proc_example = partial(process_example)
     
     for i, batch in enumerate(dataset):
         # Process batch in parallel
