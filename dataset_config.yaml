@@ -3,7 +3,7 @@ config: "default"
 split: "train"
 image_column: "image"
 id_column: "id_str"
-pool_size: 1000
+pool_size: 5000
 pool_seed: 42
 image_cache_dir: "cache/images"
 image_cache_max_bytes: 524288000  # 500 MB
