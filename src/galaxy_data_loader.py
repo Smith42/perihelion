@@ -23,8 +23,13 @@ logger = logging.getLogger(__name__)
 _SHUFFLE_BUFFER = 200
 
 
-def _make_dataset(seed: int, pool_size: int):
-    """Return a shuffled, length-limited streaming dataset iterator."""
+def _make_dataset(seed: int, pool_size: int, with_images: bool = True):
+    """Return a shuffled, length-limited streaming dataset iterator.
+
+    with_images=False uses select_columns to skip the image column entirely
+    at the Parquet level — no image bytes downloaded.
+    Both modes use the same seed+buffer so row i is always the same galaxy.
+    """
     from datasets import load_dataset
     from datasets import Image as HFImage
 
@@ -36,8 +41,12 @@ def _make_dataset(seed: int, pool_size: int):
         token=HF_TOKEN if HF_TOKEN else None,
     )
     features = getattr(ds, "features", None)
-    if features and IMAGE_COLUMN in features:
-        ds = ds.cast_column(IMAGE_COLUMN, HFImage(decode=False))
+    if with_images:
+        if features and IMAGE_COLUMN in features:
+            ds = ds.cast_column(IMAGE_COLUMN, HFImage(decode=False))
+    else:
+        if features and IMAGE_COLUMN in features:
+            ds = ds.select_columns([c for c in features if c != IMAGE_COLUMN])
 
     ds = ds.shuffle(seed=seed, buffer_size=_SHUFFLE_BUFFER)
     ds = ds.take(pool_size)
@@ -134,56 +143,58 @@ def sample_pool_streaming(
     if seed is None:
         seed = random.randint(0, 2**32 - 1)
 
-    logger.info("Streaming %d galaxies (seed=%d)...", pool_size, seed)
+    logger.info("Streaming metadata for %d galaxies (seed=%d)...", pool_size, seed)
 
-    # Pool IDs are just 0..pool_size-1 — known upfront
-    ids = list(range(pool_size))
+    # Pass 1: metadata only — fast, no images downloaded
+    ids: list[int] = []
     metadata_map: dict[int, dict] = {}
+    for i, row in enumerate(_make_dataset(seed, pool_size, with_images=False)):
+        metadata_map[i] = row
+        ids.append(i)
 
-    it = _make_dataset(seed, pool_size)
-    sync_count = min(prefetch_images, pool_size)
+    logger.info("All %d galaxy IDs ready", len(ids))
 
+    # Pass 2: images — same seed+buffer → same row order as pass 1
     def _extract_bytes(img_col) -> bytes | None:
-        """Extract raw JPEG bytes from either a bytes-dict or a PIL Image."""
         if isinstance(img_col, dict):
             return img_col.get("bytes")
         if img_col is not None:
-            # cast_column didn't take effect — img_col is a PIL Image
             try:
                 import io
                 buf = io.BytesIO()
                 img_col.save(buf, format="JPEG")
                 return buf.getvalue()
             except Exception as e:
-                logger.warning("Failed to convert PIL image to bytes: %s", e)
+                logger.warning("PIL conversion failed: %s", e)
         return None
 
-    def _process_row(i: int, row: dict):
+    img_it = _make_dataset(seed, pool_size, with_images=True)
+    sync_count = min(prefetch_images, pool_size)
+
+    for i in range(sync_count):
+        row = next(img_it)
         img_bytes = _extract_bytes(row.get(IMAGE_COLUMN))
         if img_bytes:
             image_cache.put(i, img_bytes)
         else:
             logger.warning("No image bytes for row %d", i)
-        metadata_map[i] = {k: v for k, v in row.items() if k != IMAGE_COLUMN}
 
-    # Synchronous: first sync_count rows — populate metadata + cache images
-    for i in range(sync_count):
-        _process_row(i, next(it))
-
-    logger.info("%d images cached — app ready, filling remaining %d in background",
+    logger.info("%d images cached — app ready, %d remaining in background",
                 sync_count, pool_size - sync_count)
 
-    # Asynchronous: rest of the pool
     if sync_count < pool_size:
         def _bg():
             for i in range(sync_count, pool_size):
                 try:
-                    _process_row(i, next(it))
+                    row = next(img_it)
+                    img_bytes = _extract_bytes(row.get(IMAGE_COLUMN))
+                    if img_bytes:
+                        image_cache.put(i, img_bytes)
                 except StopIteration:
                     break
                 except Exception as e:
                     logger.warning("Background error at row %d: %s", i, e)
-            logger.info("Background streaming complete")
+            logger.info("Background image caching complete")
 
         threading.Thread(target=_bg, daemon=True).start()
 
