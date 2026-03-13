@@ -105,6 +105,7 @@ def load_elo_state() -> bool:
                 repo_type="dataset",
                 filename="state/elo_state.json",
                 token=HF_TOKEN if HF_TOKEN else None,
+                force_download=True,
             )
             with open(local_path) as f:
                 raw = json.load(f)
@@ -153,8 +154,13 @@ def _save_state():
         if _state is None:
             return
         data = _state.to_dict()
-    with open(STATE_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    if _state_scheduler is not None:
+        with _state_scheduler.lock:
+            with open(STATE_FILE, "w") as f:
+                json.dump(data, f, indent=2)
+    else:
+        with open(STATE_FILE, "w") as f:
+            json.dump(data, f, indent=2)
 
 
 def _expected_score(rating_a: float, rating_b: float) -> float:
