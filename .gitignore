@@ -67,4 +67,5 @@ Thumbs.db
 
 # Application specific
 state/
+cache/
 *.log

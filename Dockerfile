@@ -7,7 +7,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
 COPY src/ ./src/
-COPY images/ ./images/
+COPY dataset_config.yaml .
+
+RUN mkdir -p cache/images
 
 EXPOSE 7860
 
