@@ -15,7 +15,7 @@ def get_app_theme() -> str:
 <html>
     <head>
         {%metas%}
-        <title>g-Harmony</title>
+        <title>Perihelion</title>
         {%favicon%}
         {%css%}
         <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -518,8 +518,8 @@ def create_layout():
             # Header
             html.Div(
                 [
-                    html.Div("g-Harmony", className="gharmony-title text-center"),
-                    html.Div("FIND YOUR GALAXY MATCH", className="gharmony-tagline text-center mt-1"),
+                    html.Div("Perihelion", className="gharmony-title text-center"),
+                    html.Div("VOTE FOR THE MOST INTERESTING GALAXY", className="gharmony-tagline text-center mt-1"),
                     html.Div(
                         "Left/Right arrow keys to choose",
                         style={

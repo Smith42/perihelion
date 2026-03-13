@@ -29,7 +29,7 @@ def create_app() -> dash.Dash:
         external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.icons.FONT_AWESOME],
         suppress_callback_exceptions=True,
     )
-    app.title = "g-Harmony"
+    app.title = "Perihelion"
     app.index_string = get_app_theme()
 
     server = app.server

@@ -407,7 +407,7 @@ def get_leaderboard() -> list[dict]:
             ],
             key=lambda x: x["elo"],
             reverse=True,
-        )
+        )[:20]
 
 
 def get_rating(galaxy_idx: int) -> float:
