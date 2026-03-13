@@ -45,16 +45,32 @@ def create_app() -> dash.Dash:
     # Initialize tournament
     logger.info("Loading tournament state...")
     loaded = elo.load_tournament_state()
-    if not loaded:
-        logger.info("No existing tournament found. Streaming new pool...")
-        try:
-            logger.info("Streaming pool of %d galaxies from HF dataset...", POOL_SIZE)
-            pool, metadata_map = sample_pool_streaming(POOL_SIZE)
-            register_metadata(metadata_map)
-            elo.initialize_tournament(pool)
-        except Exception as e:
-            logger.error("Failed to initialize tournament: %s", e)
-            raise
+
+    # Always re-stream the pool to populate the image + metadata caches.
+    # On reload we reuse the saved seed so the same galaxies are sampled in the
+    # same order, keeping ELO rankings consistent across restarts.
+    seed = elo.get_pool_seed() if loaded else None
+    logger.info(
+        "Streaming pool of %d galaxies (seed=%s)...",
+        POOL_SIZE,
+        seed if seed is not None else "random",
+    )
+    try:
+        pool, metadata_map, used_seed = sample_pool_streaming(POOL_SIZE, seed=seed)
+        register_metadata(metadata_map)
+        if not loaded:
+            elo.initialize_tournament(pool, pool_seed=used_seed)
+        else:
+            # Persist seed into existing state so future reloads can reuse it
+            elo.set_pool_seed(used_seed)
+            logger.info(
+                "Tournament state restored: round %d, %d active galaxies",
+                elo.get_tournament_info().get("current_round", 1),
+                len(pool),
+            )
+    except Exception as e:
+        logger.error("Failed to stream galaxy pool: %s", e)
+        raise
 
     # Layout and callbacks
     app.layout = create_layout()

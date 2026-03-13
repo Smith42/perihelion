@@ -3,7 +3,7 @@ config: "default"
 split: "train"
 image_column: "image"
 id_column: "id_str"
-pool_size: 3000
+pool_size: 1000
 min_comparisons_per_round: 3
 max_comparisons_per_round: 5
 elimination_fraction: 0.5

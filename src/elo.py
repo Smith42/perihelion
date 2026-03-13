@@ -44,6 +44,7 @@ class TournamentState:
         eliminated: list[int] | None = None,
         total_comparisons: int = 0,
         tournament_complete: bool = False,
+        pool_seed: int | None = None,
     ):
         self.active_pool = list(active_pool)
         self.elo_ratings = elo_ratings or {idx: DEFAULT_ELO for idx in active_pool}
@@ -52,6 +53,7 @@ class TournamentState:
         self.eliminated = eliminated or []
         self.total_comparisons = total_comparisons
         self.tournament_complete = tournament_complete
+        self.pool_seed = pool_seed
 
     def to_dict(self) -> dict:
         return {
@@ -62,6 +64,7 @@ class TournamentState:
             "eliminated": self.eliminated,
             "total_comparisons": self.total_comparisons,
             "tournament_complete": self.tournament_complete,
+            "pool_seed": self.pool_seed,
         }
 
     @classmethod
@@ -74,6 +77,7 @@ class TournamentState:
             eliminated=d.get("eliminated", []),
             total_comparisons=d.get("total_comparisons", 0),
             tournament_complete=d.get("tournament_complete", False),
+            pool_seed=d.get("pool_seed"),
         )
 
 
@@ -94,11 +98,11 @@ def _init_scheduler():
     logger.info("ELO state scheduler initialized (repo=%s)", HF_LOG_REPO_ID)
 
 
-def initialize_tournament(pool_indices: list[int]):
+def initialize_tournament(pool_indices: list[int], pool_seed: int | None = None):
     """Create a fresh tournament with the given pool."""
     global _state
     with _lock:
-        _state = TournamentState(active_pool=pool_indices)
+        _state = TournamentState(active_pool=pool_indices, pool_seed=pool_seed)
     _save_state()
     _init_scheduler()
     logger.info("Tournament initialized with %d galaxies", len(pool_indices))
@@ -331,6 +335,20 @@ def select_pair(seen_pairs: set[tuple[int, int]]) -> tuple[int, int] | None:
     if random.random() < 0.5:
         return (pair[1], pair[0])
     return (pair[0], pair[1])
+
+
+def get_pool_seed() -> int | None:
+    """Return the shuffle seed used when the current pool was sampled."""
+    with _lock:
+        return _state.pool_seed if _state else None
+
+
+def set_pool_seed(seed: int):
+    """Store the pool seed into the current tournament state and save."""
+    with _lock:
+        if _state is not None:
+            _state.pool_seed = seed
+    _save_state()
 
 
 def get_tournament_info() -> dict:

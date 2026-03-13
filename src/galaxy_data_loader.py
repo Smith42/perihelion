@@ -60,6 +60,29 @@ def sample_pool_indices(total: int, pool_size: int) -> list[int]:
 # Row / image fetching
 # ---------------------------------------------------------------------------
 
+def fetch_image_bytes(row_index: int) -> bytes | None:
+    """Fetch raw image bytes for a single row via the dataset-viewer API.
+
+    Uses fetch_rows to get the signed image URL, then downloads the image.
+    Returns None on any failure.
+    """
+    rows = fetch_rows([row_index])
+    row = rows.get(row_index)
+    if row is None:
+        return None
+    img_url = _extract_image_url(row)
+    if not img_url:
+        logger.warning("No image URL in row %d", row_index)
+        return None
+    try:
+        resp = requests.get(img_url, headers=_hf_headers(), timeout=30)
+        resp.raise_for_status()
+        return resp.content
+    except Exception as e:
+        logger.warning("Failed to download image for row %d: %s", row_index, e)
+        return None
+
+
 def fetch_rows(offsets: list[int]) -> dict[int, dict]:
     """Fetch rows by offset via the HF dataset-viewer /rows endpoint.
 
@@ -206,20 +229,33 @@ image_cache = ImageCache()
 # Streaming pool sampler
 # ---------------------------------------------------------------------------
 
-def sample_pool_streaming(pool_size: int) -> tuple[list[int], dict[int, dict]]:
+def sample_pool_streaming(
+    pool_size: int, seed: int | None = None
+) -> tuple[list[int], dict[int, dict], int]:
     """Stream pool_size shuffled galaxies from HF Datasets, pre-caching images.
+
+    Args:
+        pool_size: Number of galaxies to include in the pool.
+        seed: Shuffle seed. If None, a random seed is generated. Pass the same
+              seed on subsequent startups to reproduce the exact same pool order
+              so that saved ELO state remains valid across restarts.
 
     Returns:
         ids: sequential ints 0..N-1 used as galaxy IDs throughout the app
         metadata_map: {id -> row_dict (without image column)} for display names
+        seed: the seed that was used (store in tournament state for reuse)
     """
     from datasets import load_dataset
     from datasets import Image as HFImage
 
+    if seed is None:
+        seed = random.randint(0, 2**32 - 1)
+
     logger.info(
-        "Streaming %d galaxies from %s (shuffle buffer=10000)...",
+        "Streaming %d galaxies from %s (shuffle seed=%d)...",
         pool_size,
         DATASET_ID,
+        seed,
     )
 
     ds = load_dataset(
@@ -235,7 +271,7 @@ def sample_pool_streaming(pool_size: int) -> tuple[list[int], dict[int, dict]]:
     if features and IMAGE_COLUMN in features:
         ds = ds.cast_column(IMAGE_COLUMN, HFImage(decode=False))
 
-    ds = ds.shuffle(seed=random.randint(0, 2**32 - 1), buffer_size=10_000)
+    ds = ds.shuffle(seed=seed, buffer_size=10_000)
     ds = ds.take(pool_size)
 
     ids: list[int] = []
@@ -259,4 +295,4 @@ def sample_pool_streaming(pool_size: int) -> tuple[list[int], dict[int, dict]]:
             logger.info("Streamed %d/%d galaxies", i + 1, pool_size)
 
     logger.info("Finished streaming %d galaxies", len(ids))
-    return ids, metadata_map
+    return ids, metadata_map, seed
