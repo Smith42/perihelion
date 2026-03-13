@@ -13,6 +13,7 @@ from src.config import (
     DATASET_ID,
     DATASET_SPLIT,
     HF_TOKEN,
+    ID_COLUMN,
     IMAGE_CACHE_DIR,
     IMAGE_CACHE_MAX_BYTES,
     IMAGE_COLUMN,
@@ -45,8 +46,8 @@ def _make_dataset(seed: int, pool_size: int, with_images: bool = True):
         if features and IMAGE_COLUMN in features:
             ds = ds.cast_column(IMAGE_COLUMN, HFImage(decode=False))
     else:
-        if features and IMAGE_COLUMN in features:
-            ds = ds.select_columns([c for c in features if c != IMAGE_COLUMN])
+        if features and ID_COLUMN in features:
+            ds = ds.select_columns([ID_COLUMN])
 
     ds = ds.shuffle(seed=seed, buffer_size=_SHUFFLE_BUFFER)
     ds = ds.take(pool_size)
@@ -149,7 +150,7 @@ def sample_pool_streaming(
     ids: list[int] = []
     metadata_map: dict[int, dict] = {}
     for i, row in enumerate(_make_dataset(seed, pool_size, with_images=False)):
-        metadata_map[i] = row
+        metadata_map[i] = {ID_COLUMN: row.get(ID_COLUMN)}
         ids.append(i)
 
     logger.info("All %d galaxy IDs ready", len(ids))
