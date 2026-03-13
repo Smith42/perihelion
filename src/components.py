@@ -358,20 +358,15 @@ def create_arena(left_idx, right_idx):
 
 def create_progress_dashboard(info: dict):
     """Build the ELO ranking progress dashboard."""
-    pool_size = info.get("pool_size", 0)
     total_comps = info.get("total_comparisons", 0)
     elo_values = info.get("elo_values", [])
 
     stats_row = dbc.Row(
         [
             dbc.Col(html.Div([
-                html.Div(str(pool_size), className="progress-stat-value"),
-                html.Div("GALAXIES", className="progress-stat-label"),
-            ], className="progress-stat"), width=6),
-            dbc.Col(html.Div([
                 html.Div(str(total_comps), className="progress-stat-value"),
                 html.Div("COMPARISONS", className="progress-stat-label"),
-            ], className="progress-stat"), width=6),
+            ], className="progress-stat"), width=12),
         ],
         className="mb-3",
     )
