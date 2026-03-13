@@ -4,10 +4,6 @@ split: "train"
 image_column: "image"
 id_column: "id_str"
 pool_size: 1000
-min_comparisons_per_round: 3
-max_comparisons_per_round: 5
-elimination_fraction: 0.5
-final_pool_size: 100
+pool_seed: 42
 image_cache_dir: "cache/images"
 image_cache_max_bytes: 524288000  # 500 MB
-cache_prefetch_count: 20

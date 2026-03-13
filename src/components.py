@@ -340,7 +340,7 @@ def create_arena(left_idx=None, right_idx=None):
         return html.Div(
             [
                 html.Div(
-                    "Tournament Complete!",
+                    "You've seen every pair!",
                     style={
                         "fontFamily": "'Playfair Display', serif",
                         "fontSize": "1.8rem",
@@ -350,8 +350,7 @@ def create_arena(left_idx=None, right_idx=None):
                     },
                 ),
                 html.P(
-                    "The top galaxies have been identified. "
-                    "Check the leaderboard below for final rankings!",
+                    "Reset your session to keep voting and refine the rankings.",
                     style={"color": "rgba(255,255,255,0.5)", "maxWidth": "400px", "margin": "0 auto 24px"},
                 ),
                 dbc.Button(
@@ -393,40 +392,25 @@ def create_arena(left_idx=None, right_idx=None):
 
 
 def create_progress_dashboard(info: dict):
-    """Build the tournament progress dashboard."""
-    current_round = info.get("current_round", 0)
+    """Build the ELO ranking progress dashboard."""
     pool_size = info.get("pool_size", 0)
     total_comps = info.get("total_comparisons", 0)
-    eliminated_count = info.get("eliminated_count", 0)
-    est_remaining = info.get("est_remaining_this_round", 0)
     elo_values = info.get("elo_values", [])
-    tournament_complete = info.get("tournament_complete", False)
 
-    # Stats row
-    status_text = "COMPLETE" if tournament_complete else f"ROUND {current_round}"
     stats_row = dbc.Row(
         [
             dbc.Col(html.Div([
-                html.Div(status_text, className="progress-stat-value"),
-                html.Div("STATUS", className="progress-stat-label"),
-            ], className="progress-stat"), width=3),
-            dbc.Col(html.Div([
                 html.Div(str(pool_size), className="progress-stat-value"),
-                html.Div("ACTIVE", className="progress-stat-label"),
-            ], className="progress-stat"), width=3),
+                html.Div("GALAXIES", className="progress-stat-label"),
+            ], className="progress-stat"), width=6),
             dbc.Col(html.Div([
                 html.Div(str(total_comps), className="progress-stat-value"),
                 html.Div("COMPARISONS", className="progress-stat-label"),
-            ], className="progress-stat"), width=3),
-            dbc.Col(html.Div([
-                html.Div(str(eliminated_count), className="progress-stat-value"),
-                html.Div("ELIMINATED", className="progress-stat-label"),
-            ], className="progress-stat"), width=3),
+            ], className="progress-stat"), width=6),
         ],
         className="mb-3",
     )
 
-    # ELO distribution histogram
     if elo_values:
         fig = go.Figure(data=[go.Histogram(
             x=elo_values,
@@ -443,47 +427,14 @@ def create_progress_dashboard(info: dict):
             font_size=10,
             margin=dict(l=30, r=10, t=10, b=30),
             height=120,
-            xaxis=dict(
-                gridcolor="rgba(255,255,255,0.05)",
-                title_text="ELO Rating",
-                title_font_size=9,
-            ),
-            yaxis=dict(
-                gridcolor="rgba(255,255,255,0.05)",
-                title_text="Count",
-                title_font_size=9,
-            ),
+            xaxis=dict(gridcolor="rgba(255,255,255,0.05)", title_text="ELO Rating", title_font_size=9),
+            yaxis=dict(gridcolor="rgba(255,255,255,0.05)", title_text="Count", title_font_size=9),
         )
-        histogram = dcc.Graph(
-            figure=fig,
-            config={"displayModeBar": False},
-            style={"height": "120px"},
-        )
+        histogram = dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"height": "120px"})
     else:
         histogram = html.Div()
 
-    # Remaining estimate
-    remaining_text = (
-        "Tournament complete!" if tournament_complete
-        else f"~{est_remaining} comparisons remaining this round"
-    )
-
-    return html.Div(
-        [
-            stats_row,
-            histogram,
-            html.Div(
-                remaining_text,
-                style={
-                    "textAlign": "center",
-                    "fontSize": "0.7rem",
-                    "color": "rgba(255,255,255,0.3)",
-                    "marginTop": "8px",
-                },
-            ),
-        ],
-        className="progress-dashboard",
-    )
+    return html.Div([stats_row, histogram], className="progress-dashboard")
 
 
 def create_leaderboard_rows(leaderboard_data):
@@ -571,7 +522,7 @@ def create_layout():
             dcc.Store(id="seen-pairs", data=[]),
             dcc.Store(id="current-pair", data=None),
             dcc.Store(id="comparison-count", data=0),
-            dcc.Store(id="tournament-info", data={}),
+            dcc.Store(id="elo-info", data={}),
             dcc.Store(id="session-id", data=""),
 
             # Interval for progress updates
