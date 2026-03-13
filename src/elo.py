@@ -190,10 +190,10 @@ def record_comparison(winner_idx: int, loser_idx: int) -> dict:
     }
 
 
-def select_pair(seen_pairs: set[tuple[int, int]]) -> tuple[int, int] | None:
+def select_pair() -> tuple[int, int] | None:
     """Select a pair to compare.
 
-    70% close-ELO matchup, 30% random. Returns None if no unseen pair available.
+    70% close-ELO matchup, 30% random.
     """
     with _lock:
         if _state is None:
@@ -208,16 +208,6 @@ def select_pair(seen_pairs: set[tuple[int, int]]) -> tuple[int, int] | None:
             rated = sorted(pool, key=lambda idx: _state.elo_ratings.get(idx, DEFAULT_ELO))
             start = random.randint(0, len(rated) - 2)
             pair = [rated[start], rated[start + 1]]
-
-    if (pair[0], pair[1]) in seen_pairs or (pair[1], pair[0]) in seen_pairs:
-        with _lock:
-            pool = list(_state.pool)
-        for _ in range(50):
-            pair = random.sample(pool, 2)
-            if (pair[0], pair[1]) not in seen_pairs and (pair[1], pair[0]) not in seen_pairs:
-                break
-        else:
-            return None
 
     if random.random() < 0.5:
         return (pair[1], pair[0])

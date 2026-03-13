@@ -334,43 +334,8 @@ def create_galaxy_card(row_index: int, side: str = "left"):
     )
 
 
-def create_arena(left_idx=None, right_idx=None):
+def create_arena(left_idx, right_idx):
     """Build the two-card arena with VS divider."""
-    if left_idx is None or right_idx is None:
-        return html.Div(
-            [
-                html.Div(
-                    "You've seen every pair!",
-                    style={
-                        "fontFamily": "'Playfair Display', serif",
-                        "fontSize": "1.8rem",
-                        "fontWeight": "700",
-                        "color": "#fff",
-                        "marginBottom": "12px",
-                    },
-                ),
-                html.P(
-                    "Reset your session to keep voting and refine the rankings.",
-                    style={"color": "rgba(255,255,255,0.5)", "maxWidth": "400px", "margin": "0 auto 24px"},
-                ),
-                dbc.Button(
-                    "Reset Session",
-                    id="reset-session",
-                    style={
-                        "background": "linear-gradient(135deg, #a78bfa, #f472b6)",
-                        "border": "none",
-                        "color": "#fff",
-                        "fontFamily": "'Outfit', sans-serif",
-                        "fontWeight": "600",
-                        "padding": "12px 36px",
-                        "borderRadius": "30px",
-                        "fontSize": "0.95rem",
-                    },
-                ),
-            ],
-            className="all-done-card",
-        )
-
     return dbc.Row(
         [
             dbc.Col(
@@ -519,7 +484,6 @@ def create_layout():
             ),
 
             # Stores
-            dcc.Store(id="seen-pairs", data=[]),
             dcc.Store(id="current-pair", data=None),
             dcc.Store(id="comparison-count", data=0),
             dcc.Store(id="elo-info", data={}),

@@ -4,7 +4,7 @@ import uuid
 import logging
 
 import dash
-from dash import Input, Output, State, ctx, html, no_update
+from dash import Input, Output, State, ctx
 from dash.exceptions import PreventUpdate
 
 from src import elo
@@ -30,19 +30,21 @@ def register_callbacks(app):
     )
     def initial_load(_):
         session_id = uuid.uuid4().hex
-        pair = elo.select_pair(set())
-        arena = create_arena(pair[0], pair[1]) if pair else create_arena(None, None)
-        current_pair_data = list(pair) if pair else None
-        leaderboard = create_leaderboard_rows(elo.get_leaderboard())
+        pair = elo.select_pair()
         info = elo.get_info()
-        dashboard = create_progress_dashboard(info)
-        return arena, current_pair_data, leaderboard, session_id, info, dashboard
+        return (
+            create_arena(pair[0], pair[1]),
+            list(pair),
+            create_leaderboard_rows(elo.get_leaderboard()),
+            session_id,
+            info,
+            create_progress_dashboard(info),
+        )
 
     @app.callback(
         [
             Output("arena-container", "children", allow_duplicate=True),
             Output("current-pair", "data", allow_duplicate=True),
-            Output("seen-pairs", "data", allow_duplicate=True),
             Output("comparison-count", "data", allow_duplicate=True),
             Output("leaderboard-body", "children", allow_duplicate=True),
             Output("elo-info", "data", allow_duplicate=True),
@@ -51,13 +53,12 @@ def register_callbacks(app):
         [Input("left-card-btn", "n_clicks"), Input("right-card-btn", "n_clicks")],
         [
             State("current-pair", "data"),
-            State("seen-pairs", "data"),
             State("comparison-count", "data"),
             State("session-id", "data"),
         ],
         prevent_initial_call=True,
     )
-    def handle_card_click(left_clicks, right_clicks, current_pair, seen_pairs, comp_count, session_id):
+    def handle_card_click(left_clicks, right_clicks, current_pair, comp_count, session_id):
         if not ctx.triggered_id:
             raise PreventUpdate
         if (left_clicks in [0, None]) and (right_clicks in [0, None]):
@@ -65,8 +66,6 @@ def register_callbacks(app):
         if current_pair is None:
             raise PreventUpdate
 
-        if seen_pairs is None:
-            seen_pairs = []
         if comp_count is None:
             comp_count = 0
 
@@ -90,19 +89,17 @@ def register_callbacks(app):
             "elo_right_after": result["loser_elo_after"] if winner_idx == left_idx else result["winner_elo_after"],
         })
 
-        seen_pairs.append([left_idx, right_idx])
-        comp_count += 1
-
-        seen_set = {(p[0], p[1]) for p in seen_pairs} | {(p[1], p[0]) for p in seen_pairs}
-        pair = elo.select_pair(seen_set)
-        arena = create_arena(pair[0], pair[1]) if pair else create_arena(None, None)
-        current_pair_data = list(pair) if pair else None
-
+        pair = elo.select_pair()
         info = elo.get_info()
-        leaderboard = create_leaderboard_rows(elo.get_leaderboard())
-        dashboard = create_progress_dashboard(info)
 
-        return arena, current_pair_data, seen_pairs, comp_count, leaderboard, info, dashboard
+        return (
+            create_arena(pair[0], pair[1]),
+            list(pair),
+            comp_count + 1,
+            create_leaderboard_rows(elo.get_leaderboard()),
+            info,
+            create_progress_dashboard(info),
+        )
 
     @app.callback(
         [
@@ -137,7 +134,6 @@ def register_callbacks(app):
         [
             Output("arena-container", "children", allow_duplicate=True),
             Output("current-pair", "data", allow_duplicate=True),
-            Output("seen-pairs", "data", allow_duplicate=True),
             Output("comparison-count", "data", allow_duplicate=True),
             Output("leaderboard-body", "children", allow_duplicate=True),
         ],
@@ -147,8 +143,10 @@ def register_callbacks(app):
     def reset_session(n_clicks):
         if not n_clicks:
             raise PreventUpdate
-        pair = elo.select_pair(set())
-        arena = create_arena(pair[0], pair[1]) if pair else create_arena(None, None)
-        current_pair_data = list(pair) if pair else None
-        leaderboard = create_leaderboard_rows(elo.get_leaderboard())
-        return arena, current_pair_data, [], 0, leaderboard
+        pair = elo.select_pair()
+        return (
+            create_arena(pair[0], pair[1]),
+            list(pair),
+            0,
+            create_leaderboard_rows(elo.get_leaderboard()),
+        )
