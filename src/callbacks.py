@@ -9,7 +9,6 @@ from dash.exceptions import PreventUpdate
 
 from src import elo
 from src.hf_logging import log_query_event
-from src.galaxy_data_loader import image_cache
 from src.components import create_arena, create_leaderboard_rows, create_progress_dashboard
 
 logger = logging.getLogger(__name__)
@@ -38,15 +37,8 @@ def register_callbacks(app):
             arena = create_arena(None, None)
             current_pair_data = None
         else:
-            # Ensure images are cached for the initial pair
-            image_cache.ensure_cached(pair[0])
-            image_cache.ensure_cached(pair[1])
             arena = create_arena(pair[0], pair[1])
             current_pair_data = list(pair)
-
-            # Prefetch upcoming images
-            info = elo.get_tournament_info()
-            _prefetch_upcoming(info)
 
         leaderboard = create_leaderboard_rows(elo.get_leaderboard())
         info = elo.get_tournament_info()
@@ -150,18 +142,12 @@ def register_callbacks(app):
             arena = create_arena(None, None)
             current_pair_data = None
         else:
-            # Ensure images are cached
-            image_cache.ensure_cached(pair[0])
-            image_cache.ensure_cached(pair[1])
             arena = create_arena(pair[0], pair[1])
             current_pair_data = list(pair)
 
         info = elo.get_tournament_info()
         leaderboard = create_leaderboard_rows(elo.get_leaderboard())
         dashboard = create_progress_dashboard(info)
-
-        # Prefetch upcoming images
-        _prefetch_upcoming(info)
 
         return (
             arena,
@@ -229,8 +215,6 @@ def register_callbacks(app):
             arena = create_arena(None, None)
             current_pair_data = None
         else:
-            image_cache.ensure_cached(pair[0])
-            image_cache.ensure_cached(pair[1])
             arena = create_arena(pair[0], pair[1])
             current_pair_data = list(pair)
 
@@ -245,9 +229,3 @@ def register_callbacks(app):
         )
 
 
-def _prefetch_upcoming(info: dict):
-    """Prefetch images for top-rated galaxies to reduce latency."""
-    top = info.get("top_indices", [])
-    if top:
-        from src.config import CACHE_PREFETCH_COUNT
-        image_cache.prefetch(top[:CACHE_PREFETCH_COUNT])

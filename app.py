@@ -34,10 +34,10 @@ def create_app() -> dash.Dash:
 
     server = app.server
 
-    # Serve galaxy images from cache
+    # Serve galaxy images from cache (populated at startup via streaming)
     @server.route("/galaxy-images/<int:row_index>.jpg")
     def serve_galaxy_image(row_index):
-        path = image_cache.ensure_cached(row_index)
+        path = image_cache.get_path(row_index)
         if path is None:
             abort(404)
         return send_file(path, mimetype="image/jpeg")
