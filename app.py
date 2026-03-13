@@ -11,7 +11,7 @@ from src.callbacks import register_callbacks
 from src import elo
 from src.galaxy_data_loader import sample_pool_streaming, image_cache
 from src.galaxy_profiles import register_metadata
-from src.config import POOL_SIZE, POOL_SEED
+from src.config import POOL_SIZE, POOL_SEED, IMAGE_PREFETCH_COUNT
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,7 +41,7 @@ def create_app() -> dash.Dash:
 
     # Always stream with the fixed seed so every participant sees the same pool
     logger.info("Streaming pool of %d galaxies (seed=%d)...", POOL_SIZE, POOL_SEED)
-    pool, metadata_map, _ = sample_pool_streaming(POOL_SIZE, seed=POOL_SEED)
+    pool, metadata_map, _ = sample_pool_streaming(POOL_SIZE, seed=POOL_SEED, prefetch_images=IMAGE_PREFETCH_COUNT)
     register_metadata(metadata_map)
 
     # Load persisted ELO state or start fresh

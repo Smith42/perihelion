@@ -22,6 +22,7 @@ IMAGE_COLUMN = os.getenv("IMAGE_COLUMN", "image")
 ID_COLUMN = os.getenv("ID_COLUMN", "id_str")
 POOL_SIZE = int(os.getenv("POOL_SIZE", "5000"))
 POOL_SEED = int(os.getenv("POOL_SEED", "42"))
+IMAGE_PREFETCH_COUNT = int(os.getenv("IMAGE_PREFETCH_COUNT", "100"))
 
 # Image cache
 IMAGE_CACHE_DIR = os.getenv("IMAGE_CACHE_DIR", "cache/images")

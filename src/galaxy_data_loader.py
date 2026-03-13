@@ -18,18 +18,41 @@ from src.config import (
 
 logger = logging.getLogger(__name__)
 
+# Must be identical across both streaming passes so row order is reproducible.
+_SHUFFLE_BUFFER = 1_000
+
+
+def _make_dataset(seed: int, pool_size: int, with_images: bool):
+    """Return a shuffled, length-limited streaming dataset iterator."""
+    from datasets import load_dataset
+    from datasets import Image as HFImage
+
+    ds = load_dataset(
+        DATASET_ID,
+        DATASET_CONFIG,
+        split=DATASET_SPLIT,
+        streaming=True,
+        token=HF_TOKEN if HF_TOKEN else None,
+    )
+    features = getattr(ds, "features", None)
+    if with_images:
+        if features and IMAGE_COLUMN in features:
+            ds = ds.cast_column(IMAGE_COLUMN, HFImage(decode=False))
+    else:
+        if features and IMAGE_COLUMN in features:
+            ds = ds.remove_columns([IMAGE_COLUMN])
+
+    ds = ds.shuffle(seed=seed, buffer_size=_SHUFFLE_BUFFER)
+    ds = ds.take(pool_size)
+    return iter(ds)
+
 
 # ---------------------------------------------------------------------------
 # ImageCache — thread-safe, disk-based LRU
 # ---------------------------------------------------------------------------
 
 class ImageCache:
-    """Disk-based LRU image cache keyed by sequential pool index.
-
-    Images are written at startup by sample_pool_streaming and served from
-    disk thereafter.  There is no network fallback — if an image was not
-    captured during streaming it simply won't be available.
-    """
+    """Disk-based LRU image cache keyed by sequential pool index."""
 
     def __init__(self, cache_dir: str = IMAGE_CACHE_DIR, max_bytes: int = IMAGE_CACHE_MAX_BYTES):
         self._dir = Path(cache_dir)
@@ -57,7 +80,6 @@ class ImageCache:
         logger.info("Image cache: %d files, %.1f MB", len(self._access_times), total / 1e6)
 
     def get_path(self, row_index: int) -> Path | None:
-        """Return cached file path if present, updating access time."""
         p = self._path_for(row_index)
         if p.exists():
             with self._lock:
@@ -66,7 +88,6 @@ class ImageCache:
         return None
 
     def put(self, row_index: int, image_bytes: bytes) -> Path:
-        """Write image bytes to cache, evicting LRU entries if needed."""
         p = self._path_for(row_index)
         p.write_bytes(image_bytes)
         size = len(image_bytes)
@@ -77,7 +98,6 @@ class ImageCache:
         return p
 
     def _evict_if_needed(self):
-        """Evict LRU entries until total size is within bounds. Caller holds lock."""
         while self._total_bytes > self._max_bytes and self._access_times:
             lru_idx = min(self._access_times, key=self._access_times.get)
             p = self._path_for(lru_idx)
@@ -89,12 +109,6 @@ class ImageCache:
                 pass
             del self._access_times[lru_idx]
 
-    def prefetch(self, row_indices: list[int]):
-        """Log which requested indices are missing from cache (no-op fetch)."""
-        missing = [idx for idx in row_indices if self.get_path(idx) is None]
-        if missing:
-            logger.debug("prefetch: %d indices not in cache (no refetch): %s", len(missing), missing[:5])
-
 
 # Module-level singleton
 image_cache = ImageCache()
@@ -105,67 +119,78 @@ image_cache = ImageCache()
 # ---------------------------------------------------------------------------
 
 def sample_pool_streaming(
-    pool_size: int, seed: int | None = None
+    pool_size: int,
+    seed: int | None = None,
+    prefetch_images: int = 100,
 ) -> tuple[list[int], dict[int, dict], int]:
-    """Stream pool_size shuffled galaxies from HF Datasets, pre-caching images.
+    """Build the galaxy pool with lazy image loading.
 
-    Args:
-        pool_size: Number of galaxies to include in the pool.
-        seed: Shuffle seed. Pass the same seed on subsequent startups to
-              reproduce the exact same pool so saved ELO state stays valid.
+    Pass 1 (fast): streams metadata only — no image bytes downloaded.
+    Pass 2a (sync): caches the first `prefetch_images` images before returning,
+                    so the app can serve immediately.
+    Pass 2b (async): background thread fills the rest of the image cache.
+
+    Both passes use the same seed and shuffle buffer so row i in pass 1
+    is the same galaxy as row i in pass 2.
 
     Returns:
-        ids: sequential ints 0..N-1 used as galaxy IDs throughout the app
-        metadata_map: {id -> row_dict (without image column)} for display names
-        seed: the seed that was used (store in tournament state for reuse)
+        ids: sequential ints 0..N-1
+        metadata_map: {id -> row_dict (no image column)}
+        seed: seed used (fixed for reproducibility)
     """
-    from datasets import load_dataset
-    from datasets import Image as HFImage
-
     if seed is None:
         seed = random.randint(0, 2**32 - 1)
 
-    logger.info(
-        "Streaming %d galaxies from %s (shuffle seed=%d)...",
-        pool_size,
-        DATASET_ID,
-        seed,
-    )
-
-    ds = load_dataset(
-        DATASET_ID,
-        DATASET_CONFIG,
-        split=DATASET_SPLIT,
-        streaming=True,
-        token=HF_TOKEN if HF_TOKEN else None,
-    )
-
-    features = getattr(ds, "features", None)
-    if features and IMAGE_COLUMN in features:
-        ds = ds.cast_column(IMAGE_COLUMN, HFImage(decode=False))
-
-    ds = ds.shuffle(seed=seed, buffer_size=10_000)
-    ds = ds.take(pool_size)
-
+    # ------------------------------------------------------------------
+    # Pass 1: metadata only — fast, no image bytes
+    # ------------------------------------------------------------------
+    logger.info("Streaming metadata for %d galaxies (seed=%d)...", pool_size, seed)
     ids: list[int] = []
     metadata_map: dict[int, dict] = {}
 
-    for i, row in enumerate(ds):
-        img_col = row.get(IMAGE_COLUMN)
-        img_bytes: bytes | None = None
-        if isinstance(img_col, dict):
-            img_bytes = img_col.get("bytes")
-
-        if img_bytes:
-            image_cache.put(i, img_bytes)
-        else:
-            logger.warning("No image bytes for streamed row %d", i)
-
-        metadata_map[i] = {k: v for k, v in row.items() if k != IMAGE_COLUMN}
+    for i, row in enumerate(_make_dataset(seed, pool_size, with_images=False)):
+        metadata_map[i] = row
         ids.append(i)
 
-        if (i + 1) % 100 == 0:
-            logger.info("Streamed %d/%d galaxies", i + 1, pool_size)
+    logger.info("Metadata ready: %d galaxies", len(ids))
 
-    logger.info("Finished streaming %d galaxies", len(ids))
+    # ------------------------------------------------------------------
+    # Pass 2: images — same seed/buffer so row order matches pass 1
+    # ------------------------------------------------------------------
+    sync_count = min(prefetch_images, pool_size)
+    logger.info("Pre-caching first %d images...", sync_count)
+
+    img_iter = _make_dataset(seed, pool_size, with_images=True)
+
+    def _cache_row(i: int, row: dict):
+        img_col = row.get(IMAGE_COLUMN)
+        if isinstance(img_col, dict):
+            img_bytes = img_col.get("bytes")
+            if img_bytes:
+                image_cache.put(i, img_bytes)
+                return
+        logger.warning("No image bytes for row %d", i)
+
+    # Synchronous: first sync_count images
+    for i in range(sync_count):
+        _cache_row(i, next(img_iter))
+
+    logger.info("Initial %d images cached — app ready", sync_count)
+
+    # Asynchronous: remainder in background
+    remaining = pool_size - sync_count
+    if remaining > 0:
+        def _bg_cache():
+            logger.info("Background: caching %d remaining images...", remaining)
+            for i in range(sync_count, pool_size):
+                try:
+                    _cache_row(i, next(img_iter))
+                except StopIteration:
+                    break
+                except Exception as e:
+                    logger.warning("Background cache error at row %d: %s", i, e)
+            logger.info("Background image caching complete")
+
+        threading.Thread(target=_bg_cache, daemon=True).start()
+
     return ids, metadata_map, seed
