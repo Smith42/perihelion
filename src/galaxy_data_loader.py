@@ -20,11 +20,10 @@ from src.config import (
 
 logger = logging.getLogger(__name__)
 
-# Must be identical across both streaming passes so row order is reproducible.
-_SHUFFLE_BUFFER = 1_000
+_SHUFFLE_BUFFER = 200
 
 
-def _make_dataset(seed: int, pool_size: int, with_images: bool):
+def _make_dataset(seed: int, pool_size: int):
     """Return a shuffled, length-limited streaming dataset iterator."""
     from datasets import load_dataset
     from datasets import Image as HFImage
@@ -37,13 +36,8 @@ def _make_dataset(seed: int, pool_size: int, with_images: bool):
         token=HF_TOKEN if HF_TOKEN else None,
     )
     features = getattr(ds, "features", None)
-    if with_images:
-        if features and IMAGE_COLUMN in features:
-            ds = ds.cast_column(IMAGE_COLUMN, HFImage(decode=False))
-    else:
-        # Column projection at Parquet level — image bytes never downloaded
-        if features and IMAGE_COLUMN in features:
-            ds = ds.select_columns([c for c in features if c != IMAGE_COLUMN])
+    if features and IMAGE_COLUMN in features:
+        ds = ds.cast_column(IMAGE_COLUMN, HFImage(decode=False))
 
     ds = ds.shuffle(seed=seed, buffer_size=_SHUFFLE_BUFFER)
     ds = ds.take(pool_size)
@@ -126,74 +120,58 @@ def sample_pool_streaming(
     seed: int | None = None,
     prefetch_images: int = 100,
 ) -> tuple[list[int], dict[int, dict], int]:
-    """Build the galaxy pool with lazy image loading.
+    """Build the galaxy pool, caching a small batch of images before returning.
 
-    Pass 1 (fast): streams metadata only — no image bytes downloaded.
-    Pass 2a (sync): caches the first `prefetch_images` images before returning,
-                    so the app can serve immediately.
-    Pass 2b (async): background thread fills the rest of the image cache.
-
-    Both passes use the same seed and shuffle buffer so row i in pass 1
-    is the same galaxy as row i in pass 2.
+    Single streaming pass with cast_column(decode=False) to avoid Pillow.
+    The shuffle buffer is small (200 rows) so only ~300 images are downloaded
+    before the app starts serving. The rest are cached in a background thread.
 
     Returns:
         ids: sequential ints 0..N-1
         metadata_map: {id -> row_dict (no image column)}
-        seed: seed used (fixed for reproducibility)
+        seed: seed used
     """
     if seed is None:
         seed = random.randint(0, 2**32 - 1)
 
-    # ------------------------------------------------------------------
-    # Pass 1: metadata only — fast, no image bytes
-    # ------------------------------------------------------------------
-    logger.info("Streaming metadata for %d galaxies (seed=%d)...", pool_size, seed)
-    ids: list[int] = []
+    logger.info("Streaming %d galaxies (seed=%d)...", pool_size, seed)
+
+    # Pool IDs are just 0..pool_size-1 — known upfront
+    ids = list(range(pool_size))
     metadata_map: dict[int, dict] = {}
 
-    for i, row in enumerate(_make_dataset(seed, pool_size, with_images=False)):
-        metadata_map[i] = row
-        ids.append(i)
-
-    logger.info("Metadata ready: %d galaxies", len(ids))
-
-    # ------------------------------------------------------------------
-    # Pass 2: images — same seed/buffer so row order matches pass 1
-    # ------------------------------------------------------------------
+    it = _make_dataset(seed, pool_size)
     sync_count = min(prefetch_images, pool_size)
-    logger.info("Pre-caching first %d images...", sync_count)
 
-    img_iter = _make_dataset(seed, pool_size, with_images=True)
-
-    def _cache_row(i: int, row: dict):
-        img_col = row.get(IMAGE_COLUMN)
-        if isinstance(img_col, dict):
-            img_bytes = img_col.get("bytes")
-            if img_bytes:
-                image_cache.put(i, img_bytes)
-                return
-        logger.warning("No image bytes for row %d", i)
-
-    # Synchronous: first sync_count images
+    # Synchronous: first sync_count rows — populate metadata + cache images
     for i in range(sync_count):
-        _cache_row(i, next(img_iter))
+        row = next(it)
+        img_col = row.get(IMAGE_COLUMN)
+        if isinstance(img_col, dict) and img_col.get("bytes"):
+            image_cache.put(i, img_col["bytes"])
+        else:
+            logger.warning("No image bytes for row %d", i)
+        metadata_map[i] = {k: v for k, v in row.items() if k != IMAGE_COLUMN}
 
-    logger.info("Initial %d images cached — app ready", sync_count)
+    logger.info("%d images cached — app ready, filling remaining %d in background",
+                sync_count, pool_size - sync_count)
 
-    # Asynchronous: remainder in background
-    remaining = pool_size - sync_count
-    if remaining > 0:
-        def _bg_cache():
-            logger.info("Background: caching %d remaining images...", remaining)
+    # Asynchronous: rest of the pool
+    if sync_count < pool_size:
+        def _bg():
             for i in range(sync_count, pool_size):
                 try:
-                    _cache_row(i, next(img_iter))
+                    row = next(it)
+                    img_col = row.get(IMAGE_COLUMN)
+                    if isinstance(img_col, dict) and img_col.get("bytes"):
+                        image_cache.put(i, img_col["bytes"])
+                    metadata_map[i] = {k: v for k, v in row.items() if k != IMAGE_COLUMN}
                 except StopIteration:
                     break
                 except Exception as e:
-                    logger.warning("Background cache error at row %d: %s", i, e)
-            logger.info("Background image caching complete")
+                    logger.warning("Background error at row %d: %s", i, e)
+            logger.info("Background streaming complete")
 
-        threading.Thread(target=_bg_cache, daemon=True).start()
+        threading.Thread(target=_bg, daemon=True).start()
 
     return ids, metadata_map, seed
