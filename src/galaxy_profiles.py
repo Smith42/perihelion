@@ -1,5 +1,7 @@
 """Galaxy metadata accessors backed by the in-memory cache populated at startup."""
 
+from __future__ import annotations
+
 import logging
 import threading
 

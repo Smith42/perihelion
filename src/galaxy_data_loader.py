@@ -1,5 +1,7 @@
 """Galaxy data loading: HF Datasets streaming sampler + disk-based LRU image cache."""
 
+from __future__ import annotations
+
 import logging
 import random
 import threading
